@@ -22,7 +22,7 @@ from nova import context
 
 
 class Controller(wsgi.Controller):
-    def check_token(token):
+    def check_token(self, token):
         ctxt = context.get_admin_context()
         rpcapi = consoleauth_rpcapi.ConsoleAuthAPI()
         connect_info = rpcapi.check_token(ctxt, token=token)
