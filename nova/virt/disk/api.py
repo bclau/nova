@@ -75,7 +75,7 @@ disk_opts = [
                          'The format is <os_type>=<mkfs command>'),
 
     cfg.BoolOpt('resize_fs_using_block_device',
-                default=True,
+                default=False,
                 help='Attempt to resize the filesystem by accessing the '
                      'image over a block device. This is done by the host '
                      'and may not be necessary if the image contains a recent '
@@ -370,8 +370,8 @@ def teardown_container(container_dir):
 def clean_lxc_namespace(container_dir):
     """Clean up the container namespace rootfs mounting one spawned.
 
-    It will umount the mounted names that is mounted
-    but leave the linked deivces alone.
+    It will umount the mounted names that are mounted
+    but leave the linked devices alone.
     """
     try:
         img = _DiskImage(image=None, mount_dir=container_dir)

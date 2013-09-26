@@ -3691,14 +3691,16 @@ class LibvirtConnTestCase(test.TestCase):
     def test_destroy_removes_disk(self):
         instance = {"name": "instancename", "id": "42",
                     "uuid": "875a8070-d0b9-4949-8b31-104d125c9a64",
-                    "cleaned": 0, 'info_cache': None, 'security_groups': None}
+                    "cleaned": 0, 'info_cache': None, 'security_groups': []}
 
         self.mox.StubOutWithMock(libvirt_driver.LibvirtDriver,
                                  '_undefine_domain')
         libvirt_driver.LibvirtDriver._undefine_domain(instance)
         self.mox.StubOutWithMock(db, 'instance_get_by_uuid')
         db.instance_get_by_uuid(mox.IgnoreArg(), mox.IgnoreArg(),
-                                columns_to_join=[]).AndReturn(instance)
+                                columns_to_join=['info_cache',
+                                                 'security_groups']
+                                ).AndReturn(instance)
         self.mox.StubOutWithMock(shutil, "rmtree")
         shutil.rmtree(os.path.join(CONF.instances_path,
                                    'instance-%08x' % int(instance['id'])))
@@ -3777,14 +3779,16 @@ class LibvirtConnTestCase(test.TestCase):
     def test_delete_instance_files(self):
         instance = {"name": "instancename", "id": "42",
                     "uuid": "875a8070-d0b9-4949-8b31-104d125c9a64",
-                    "cleaned": 0, 'info_cache': None, 'security_groups': None}
+                    "cleaned": 0, 'info_cache': None, 'security_groups': []}
 
         self.mox.StubOutWithMock(db, 'instance_get_by_uuid')
         self.mox.StubOutWithMock(os.path, 'exists')
         self.mox.StubOutWithMock(shutil, "rmtree")
 
         db.instance_get_by_uuid(mox.IgnoreArg(), mox.IgnoreArg(),
-                                columns_to_join=[]).AndReturn(instance)
+                                columns_to_join=['info_cache',
+                                                 'security_groups']
+                                ).AndReturn(instance)
         os.path.exists(mox.IgnoreArg()).AndReturn(False)
         os.path.exists(mox.IgnoreArg()).AndReturn(True)
         shutil.rmtree(os.path.join(CONF.instances_path, instance['uuid']))
@@ -3988,6 +3992,59 @@ class LibvirtConnTestCase(test.TestCase):
                                        block_device_info=None)
 
         self.assertEquals(called['count'], 1)
+
+    def test_hard_reboot(self):
+        called = {'count': 0}
+        instance = db.instance_create(self.context, self.test_instance)
+        network_info = _fake_network_info(self.stubs, 1)
+        block_device_info = None
+
+        dummyxml = ("<domain type='kvm'><name>instance-0000000a</name>"
+                    "<devices>"
+                    "<disk type='file'><driver name='qemu' type='raw'/>"
+                    "<source file='/test/disk'/>"
+                    "<target dev='vda' bus='virtio'/></disk>"
+                    "<disk type='file'><driver name='qemu' type='qcow2'/>"
+                    "<source file='/test/disk.local'/>"
+                    "<target dev='vdb' bus='virtio'/></disk>"
+                    "</devices></domain>")
+
+        conn = libvirt_driver.LibvirtDriver(fake.FakeVirtAPI(), False)
+        self.mox.StubOutWithMock(conn, '_destroy')
+        self.mox.StubOutWithMock(conn, 'get_instance_disk_info')
+        self.mox.StubOutWithMock(conn, 'to_xml')
+        self.mox.StubOutWithMock(conn, '_create_images_and_backing')
+        self.mox.StubOutWithMock(conn, '_create_domain_and_network')
+
+        def fake_get_info(instance_name):
+            called['count'] += 1
+            if called['count'] == 1:
+                state = power_state.SHUTDOWN
+            else:
+                state = power_state.RUNNING
+            return dict(state=state)
+
+        self.stubs.Set(conn, 'get_info', fake_get_info)
+
+        conn._destroy(instance)
+        disk_info = blockinfo.get_disk_info(CONF.libvirt_type,
+                                            instance, block_device_info)
+        conn.to_xml(instance, network_info, disk_info,
+                    block_device_info=block_device_info,
+                    write_to_disk=True).AndReturn(dummyxml)
+        disk_info_json = '[{"virt_disk_size": 2}]'
+        conn.get_instance_disk_info(instance["name"], dummyxml,
+                            block_device_info).AndReturn(disk_info_json)
+        conn._create_images_and_backing(self.context, instance,
+                                libvirt_utils.get_instance_path(instance),
+                                disk_info_json)
+        conn._create_domain_and_network(dummyxml, instance,
+                                        network_info, block_device_info,
+                                        context=self.context, reboot=True)
+        self.mox.ReplayAll()
+
+        conn._hard_reboot(self.context, instance, network_info,
+                          block_device_info)
 
     def test_destroy_undefines(self):
         mock = self.mox.CreateMock(libvirt.virDomain)

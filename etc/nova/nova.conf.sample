@@ -1887,7 +1887,7 @@
 # necessary if the image contains a recent version of cloud-
 # init. Possible mechanisms require the nbd driver (for qcow
 # and raw), or loop (for raw). (boolean value)
-#resize_fs_using_block_device=true
+#resize_fs_using_block_device=false
 
 
 #
@@ -2988,7 +2988,7 @@
 
 # additional append parameters for baremetal PXE boot (string
 # value)
-#pxe_append_params=<None>
+#pxe_append_params=nofb nomodeset vga=normal
 
 # Template file for PXE configuration (string value)
 #pxe_config_template=$pybasedir/nova/virt/baremetal/pxe_config.template
@@ -3287,7 +3287,10 @@
 # Total number of VNC ports (integer value)
 #vnc_port_total=10000
 
-# VNC password (string value)
+# DEPRECATED. VNC password. The password-based access to VNC
+# consoles will be removed in the next release. The default
+# value will disable password protection on the VNC console.
+# (string value)
 #vnc_password=<None>
 
 # Whether to use linked clone (boolean value)

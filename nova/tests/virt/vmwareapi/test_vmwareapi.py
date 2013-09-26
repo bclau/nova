@@ -45,6 +45,7 @@ from nova.virt.vmwareapi import fake as vmwareapi_fake
 from nova.virt.vmwareapi import vim
 from nova.virt.vmwareapi import vm_util
 from nova.virt.vmwareapi import vmops
+from nova.virt.vmwareapi import vmware_images
 from nova.virt.vmwareapi import volume_util
 from nova.virt.vmwareapi import volumeops
 
@@ -136,6 +137,7 @@ class VMwareAPIVMTestCase(test.NoDBTestCase):
             'size': 512,
         }
         nova.tests.image.fake.stub_out_image_service(self.stubs)
+        self.vnc_host = 'test_url'
 
     def tearDown(self):
         super(VMwareAPIVMTestCase, self).tearDown()
@@ -159,14 +161,14 @@ class VMwareAPIVMTestCase(test.NoDBTestCase):
     def _create_instance_in_the_db(self, node=None):
         if not node:
             node = self.node_name
-        values = {'name': '1',
+        values = {'name': 'fake_name',
                   'id': 1,
                   'uuid': "fake-uuid",
                   'project_id': self.project_id,
                   'user_id': self.user_id,
-                  'image_ref': "1",
-                  'kernel_id': "1",
-                  'ramdisk_id': "1",
+                  'image_ref': "fake_image_uuid",
+                  'kernel_id': "fake_kernel_uuid",
+                  'ramdisk_id': "fake_ramdisk_uuid",
                   'mac_address': "de:ad:be:ef:be:ef",
                   'instance_type': 'm1.large',
                   'node': node,
@@ -250,6 +252,21 @@ class VMwareAPIVMTestCase(test.NoDBTestCase):
         instances = self.conn.list_instances()
         self.assertEquals(len(instances), 1)
 
+    def test_instance_dir_disk_created(self):
+        """Test image file isn't cached when use_linked_clone is False."""
+        self._create_vm()
+        inst_file_path = '[fake-ds] fake-uuid/fake_name.vmdk'
+        cache_file_path = '[fake-ds] vmware_base/fake_image_uuid.vmdk'
+        self.assertEqual(vmwareapi_fake.get_file(inst_file_path), True)
+        self.assertEqual(vmwareapi_fake.get_file(cache_file_path), False)
+
+    def test_cache_dir_disk_created(self):
+        """Test image disk is cached when use_linked_clone is True."""
+        self.flags(use_linked_clone=True, group='vmware')
+        self._create_vm()
+        file_path = '[fake-ds] vmware_base/fake_image_uuid.vmdk'
+        self.assertEqual(vmwareapi_fake.get_file(file_path), True)
+
     def test_spawn(self):
         self._create_vm()
         info = self.conn.get_info({'uuid': 'fake-uuid'})
@@ -269,16 +286,13 @@ class VMwareAPIVMTestCase(test.NoDBTestCase):
                 mox.IgnoreArg()).AndReturn(root_disk)
         mount_point = '/dev/vdc'
         self.mox.StubOutWithMock(volumeops.VMwareVolumeOps,
-                                 '_get_volume_uuid')
-        volumeops.VMwareVolumeOps._get_volume_uuid(mox.IgnoreArg(),
-                'volume-fake-id').AndReturn('fake_disk_uuid')
-        self.mox.StubOutWithMock(vm_util, 'get_vmdk_backed_disk_device')
-        vm_util.get_vmdk_backed_disk_device(mox.IgnoreArg(),
-                'fake_disk_uuid').AndReturn('fake_device')
+                                 '_get_res_pool_of_vm')
+        volumeops.VMwareVolumeOps._get_res_pool_of_vm(
+                 mox.IgnoreArg()).AndReturn('fake_res_pool')
         self.mox.StubOutWithMock(volumeops.VMwareVolumeOps,
-                                 '_consolidate_vmdk_volume')
-        volumeops.VMwareVolumeOps._consolidate_vmdk_volume(self.instance,
-                 mox.IgnoreArg(), 'fake_device', mox.IgnoreArg())
+                                 '_relocate_vmdk_volume')
+        volumeops.VMwareVolumeOps._relocate_vmdk_volume(mox.IgnoreArg(),
+                 'fake_res_pool', mox.IgnoreArg())
         self.mox.StubOutWithMock(volumeops.VMwareVolumeOps,
                                  'attach_volume')
         volumeops.VMwareVolumeOps.attach_volume(connection_info,
@@ -669,14 +683,21 @@ class VMwareAPIVMTestCase(test.NoDBTestCase):
                           self.conn.get_vnc_console,
                           self.instance)
 
-    def test_get_vnc_console(self):
+    def _test_get_vnc_console(self):
         self._create_vm()
         fake_vm = vmwareapi_fake._get_objects("VirtualMachine").objects[0]
         fake_vm_id = int(fake_vm.obj.value.replace('vm-', ''))
         vnc_dict = self.conn.get_vnc_console(self.instance)
-        self.assertEquals(vnc_dict['host'], 'test_url')
+        self.assertEquals(vnc_dict['host'], self.vnc_host)
         self.assertEquals(vnc_dict['port'], cfg.CONF.vmware.vnc_port +
                           fake_vm_id % cfg.CONF.vmware.vnc_port_total)
+
+    def test_get_vnc_console(self):
+        self._test_get_vnc_console()
+
+    def test_get_vnc_console_with_password(self):
+        self.flags(vnc_password='vmware', group='vmware')
+        self._test_get_vnc_console()
 
     def test_host_ip_addr(self):
         self.assertEquals(self.conn.get_host_ip_addr(), "test_url")
@@ -916,6 +937,7 @@ class VMwareAPIVCDriverTestCase(VMwareAPIVMTestCase):
         self.conn = driver.VMwareVCDriver(None, False)
         self.node_name = self.conn._resources.keys()[0]
         self.node_name2 = self.conn._resources.keys()[1]
+        self.vnc_host = 'ha-host'
 
     def tearDown(self):
         super(VMwareAPIVCDriverTestCase, self).tearDown()
@@ -982,22 +1004,12 @@ class VMwareAPIVCDriverTestCase(VMwareAPIVMTestCase):
         self._test_finish_revert_migration(power_on=False)
         self.assertEquals(False, self.power_on_called)
 
-    def test_get_vnc_console(self):
-        self._create_vm()
-        fake_vm = vmwareapi_fake._get_objects("VirtualMachine").objects[0]
-        fake_vm_id = int(fake_vm.obj.value.replace('vm-', ''))
-        vnc_dict = self.conn.get_vnc_console(self.instance)
-        self.assertEquals(vnc_dict['host'], "ha-host")
-        self.assertEquals(vnc_dict['port'], cfg.CONF.vmware.vnc_port +
-                          fake_vm_id % cfg.CONF.vmware.vnc_port_total)
-
     def test_snapshot(self):
-        # Ensure VMwareVCVMOps's _get_copy_virtual_disk_spec is getting called
+        # Ensure VMwareVCVMOps's get_copy_virtual_disk_spec is getting called
         self.mox.StubOutWithMock(vmops.VMwareVCVMOps,
-                                 '_get_copy_virtual_disk_spec')
-        self.conn._vmops._get_copy_virtual_disk_spec(
-                mox.IgnoreArg(),
-                mox.IgnoreArg(),
+                                 'get_copy_virtual_disk_spec')
+        self.conn._vmops.get_copy_virtual_disk_spec(
+                mox.IgnoreArg(), mox.IgnoreArg(),
                 mox.IgnoreArg()).AndReturn(None)
         self.mox.ReplayAll()
 
@@ -1010,3 +1022,24 @@ class VMwareAPIVCDriverTestCase(VMwareAPIVMTestCase):
                           injected_files=[], admin_password=None,
                           network_info=self.network_info,
                           block_device_info=None)
+
+    def test_spawn_with_sparse_image(self):
+        # Only a sparse disk image triggers the copy
+        self.mox.StubOutWithMock(vmware_images, 'get_vmdk_size_and_properties')
+        result = [1024, {"vmware_ostype": "otherGuest",
+                         "vmware_adaptertype": "lsiLogic",
+                         "vmware_disktype": "sparse"}]
+        vmware_images.get_vmdk_size_and_properties(
+                mox.IgnoreArg(), mox.IgnoreArg(),
+                mox.IgnoreArg()).AndReturn(result)
+
+        # Ensure VMwareVCVMOps's get_copy_virtual_disk_spec is getting called
+        self.mox.StubOutWithMock(vmops.VMwareVCVMOps,
+                                 'get_copy_virtual_disk_spec')
+        self.conn._vmops.get_copy_virtual_disk_spec(
+                mox.IgnoreArg(), mox.IgnoreArg(),
+                mox.IgnoreArg()).AndReturn(None)
+        self.mox.ReplayAll()
+        self._create_vm()
+        info = self.conn.get_info({'uuid': 'fake-uuid'})
+        self._check_vm_info(info, power_state.RUNNING)

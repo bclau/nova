@@ -429,11 +429,14 @@ class ComputeVolumeTestCase(BaseTestCase):
                                         block_device_mapping)
         self.assertEqual(self.cinfo.get('serial'), self.volume_id)
 
-    def test_boot_volume_metadata(self):
+    def test_boot_volume_metadata(self, metadata=True):
         def volume_api_get(*args, **kwargs):
-            return {
-                'volume_image_metadata': {'vol_test_key': 'vol_test_value'}
-            }
+            if metadata:
+                return {
+                    'volume_image_metadata': {'vol_test_key': 'vol_test_value'}
+                }
+            else:
+                return {}
 
         self.stubs.Set(self.compute_api.volume_api, 'get', volume_api_get)
 
@@ -449,7 +452,10 @@ class ComputeVolumeTestCase(BaseTestCase):
 
         image_meta = self.compute_api._get_bdm_image_metadata(
             self.context, block_device_mapping)
-        self.assertEqual(image_meta['vol_test_key'], 'vol_test_value')
+        if metadata:
+            self.assertEqual(image_meta['vol_test_key'], 'vol_test_value')
+        else:
+            self.assertEqual(image_meta, {})
 
         # Test it with new-style BDMs
         block_device_mapping = [{
@@ -462,7 +468,13 @@ class ComputeVolumeTestCase(BaseTestCase):
 
         image_meta = self.compute_api._get_bdm_image_metadata(
             self.context, block_device_mapping, legacy_bdm=False)
-        self.assertEqual(image_meta['vol_test_key'], 'vol_test_value')
+        if metadata:
+            self.assertEqual(image_meta['vol_test_key'], 'vol_test_value')
+        else:
+            self.assertEqual(image_meta, {})
+
+    def test_boot_volume_no_metadata(self):
+        self.test_boot_volume_metadata(metadata=False)
 
     def test_boot_image_metadata(self, metadata=True):
         def image_api_show(*args, **kwargs):
@@ -1102,6 +1114,20 @@ class ComputeTestCase(BaseTestCase):
         self.assertRaises(exception.ComputeResourcesUnavailable,
                 self.compute.run_instance, self.context, instance=instance,
                 filter_properties=filter_properties)
+
+    def test_create_multiple_instance_with_neutron_port(self):
+        instance_type = flavors.get_default_flavor()
+
+        def fake_is_neutron():
+            return True
+        self.stubs.Set(utils, 'is_neutron', fake_is_neutron)
+        self.assertRaises(exception.MultiplePortsNotApplicable,
+                          self.compute_api.create,
+                          self.context,
+                          instance_type=instance_type,
+                          image_href=None,
+                          max_count=2,
+                          requested_networks=[(None, None, 'adadds')])
 
     def test_create_instance_with_oversubscribed_ram(self):
         # Test passing of oversubscribed ram policy from the scheduler.
@@ -2872,8 +2898,9 @@ class ComputeTestCase(BaseTestCase):
         self.assertTrue('display_name' in payload)
         self.assertTrue('created_at' in payload)
         self.assertTrue('launched_at' in payload)
+        self.assertTrue('terminated_at' in payload)
         self.assertTrue('deleted_at' in payload)
-        self.assertEqual(payload['deleted_at'], timeutils.strtime(cur_time))
+        self.assertEqual(payload['terminated_at'], timeutils.strtime(cur_time))
         image_ref_url = glance.generate_image_url(FAKE_IMAGE_REF)
         self.assertEquals(payload['image_ref_url'], image_ref_url)
 
@@ -5487,6 +5514,19 @@ class ComputeTestCase(BaseTestCase):
         updated_ats = (updated_at_1, updated_at_2, updated_at_3)
         self.assertEqual(len(updated_ats), len(set(updated_ats)))
 
+    def test_no_pending_deletes_for_soft_deleted_instances(self):
+        self.flags(reclaim_instance_interval=0)
+        ctxt = context.get_admin_context()
+
+        instance = self._create_fake_instance(
+                params={'host': CONF.host,
+                        'vm_state': vm_states.SOFT_DELETED,
+                        'deleted_at': timeutils.utcnow()})
+
+        self.compute._run_pending_deletes(ctxt)
+        instance = db.instance_get_by_uuid(self.context, instance['uuid'])
+        self.assertFalse(instance['cleaned'])
+
     def test_reclaim_queued_deletes(self):
         self.flags(reclaim_instance_interval=3600)
         ctxt = context.get_admin_context()
@@ -6029,7 +6069,7 @@ class ComputeAPITestCase(BaseTestCase):
         self.assertEquals(task_states.SCHEDULING, instance['task_state'])
         self.assertEquals(1, instance['launch_index'])
         self.assertIsNotNone(instance.get('uuid'))
-        self.assertIsNone(instance.get('security_groups'))
+        self.assertEqual([], instance.security_groups.objects)
 
     def test_default_hostname_generator(self):
         fake_uuids = [str(uuid.uuid4()) for x in xrange(4)]
@@ -6485,7 +6525,7 @@ class ComputeAPITestCase(BaseTestCase):
         expected = obj_base.obj_to_primitive(
             instance_obj.Instance._from_db_object(
                 self.context, instance_obj.Instance(), exp_instance,
-                instance_obj.INSTANCE_DEFAULT_FIELDS + ['fields']))
+                instance_obj.INSTANCE_DEFAULT_FIELDS + ['fault']))
 
         def fake_db_get(_context, _instance_id, columns_to_join=None):
             return exp_instance

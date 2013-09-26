@@ -58,7 +58,7 @@ from nova.objects import instance_action
 from nova.objects import instance_info_cache
 from nova.objects import keypair as keypair_obj
 from nova.objects import migration as migration_obj
-from nova.objects import security_group
+from nova.objects import security_group as security_group_obj
 from nova.objects import service as service_obj
 from nova.openstack.common import excutils
 from nova.openstack.common.gettextutils import _
@@ -273,15 +273,6 @@ class API(base.Base):
                     instance_uuid=instance['uuid'],
                     state="temporary_readonly",
                     method=method)
-
-    def _instance_update(self, context, instance_uuid, **kwargs):
-        """Update an instance in the database using kwargs as value."""
-
-        (old_ref, instance_ref) = self.db.instance_update_and_get_original(
-                context, instance_uuid, kwargs)
-        notifications.send_update(context, old_ref, instance_ref, 'api')
-
-        return instance_ref
 
     def _record_action_start(self, context, instance, action):
         instance_action.InstanceAction.action_start(context,
@@ -809,7 +800,7 @@ class API(base.Base):
                 try:
                     volume_id = bdm['volume_id']
                     volume = self.volume_api.get(context, volume_id)
-                    return volume['volume_image_metadata']
+                    return volume.get('volume_image_metadata', {})
                 except Exception:
                     raise exception.InvalidBDMVolume(id=volume_id)
 
@@ -1177,6 +1168,15 @@ class API(base.Base):
         if block_device_mapping:
             check_policy(context, 'create:attach_volume', target)
 
+    def _check_multiple_instances_neutron_ports(self, requested_networks):
+        """Check whether multiple instances are created from port id(s)."""
+        for net, ip, port in requested_networks:
+            if port:
+                msg = _("Unable to launch multiple instances with"
+                        " a single configured port ID. Please launch your"
+                        " instance one by one with different ports.")
+                raise exception.MultiplePortsNotApplicable(reason=msg)
+
     @hooks.add_hook("create_instance")
     def create(self, context, instance_type,
                image_href, kernel_id=None, ramdisk_id=None,
@@ -1198,6 +1198,9 @@ class API(base.Base):
 
         self._check_create_policies(context, availability_zone,
                 requested_networks, block_device_mapping)
+
+        if requested_networks and max_count > 1 and utils.is_neutron():
+            self._check_multiple_instances_neutron_ports(requested_networks)
 
         return self._create_instance(
                                context, instance_type,
@@ -3663,7 +3666,7 @@ class SecurityGroupAPI(base.Base, security_group_base.SecurityGroupBase):
 
     def populate_security_groups(self, instance, security_groups):
         if not security_groups:
-            instance.security_groups = None
-            return
-        instance.security_groups = security_group.make_secgroup_list(
+            # Make sure it's an empty list and not None
+            security_groups = []
+        instance.security_groups = security_group_obj.make_secgroup_list(
             security_groups)

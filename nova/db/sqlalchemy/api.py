@@ -252,7 +252,7 @@ def exact_filter(query, model, filters, legal_keys):
         # OK, filtering on this key; what value do we search for?
         value = filters.pop(key)
 
-        if key == 'metadata':
+        if key == 'metadata' or key == 'system_metadata':
             column_attr = getattr(model, key)
             if isinstance(value, list):
                 for item in value:
@@ -481,7 +481,7 @@ def service_update(context, service_id, values):
         service_ref = _service_get(context, service_id,
                                    with_compute_node=False, session=session)
         service_ref.update(values)
-        service_ref.save(session=session)
+
     return service_ref
 
 
@@ -883,7 +883,7 @@ def floating_ip_fixed_ip_associate(context, floating_address,
             return None
         floating_ip_ref.fixed_ip_id = fixed_ip_ref["id"]
         floating_ip_ref.host = host
-        floating_ip_ref.save(session=session)
+
         return fixed_ip_ref
 
 
@@ -921,7 +921,7 @@ def floating_ip_disassociate(context, address):
                             first()
         floating_ip_ref.fixed_ip_id = None
         floating_ip_ref.host = None
-        floating_ip_ref.save(session=session)
+
     return fixed_ip_ref
 
 
@@ -1060,7 +1060,7 @@ def dnsdomain_register_for_zone(context, fqdomain, zone):
         domain_ref = _dnsdomain_get_or_create(context, session, fqdomain)
         domain_ref.scope = 'private'
         domain_ref.availability_zone = zone
-        domain_ref.save(session=session)
+        session.add(domain_ref)
 
 
 @require_admin_context
@@ -1070,7 +1070,7 @@ def dnsdomain_register_for_project(context, fqdomain, project):
         domain_ref = _dnsdomain_get_or_create(context, session, fqdomain)
         domain_ref.scope = 'public'
         domain_ref.project_id = project
-        domain_ref.save(session=session)
+        session.add(domain_ref)
 
 
 @require_admin_context
@@ -1619,7 +1619,7 @@ def instance_create(context, values):
             _validate_unique_server_name(context, session, values['hostname'])
         instance_ref.security_groups = _get_sec_group_models(session,
                 security_groups)
-        instance_ref.save(session=session)
+        session.add(instance_ref)
 
     # create the instance uuid to ec2_id mapping entry for instance
     ec2_instance_create(context, instance_ref['uuid'])
@@ -1716,6 +1716,9 @@ def _build_instance_get(context, session=None, columns_to_join=None):
     if columns_to_join is None:
         columns_to_join = ['metadata', 'system_metadata']
     for column in columns_to_join:
+        if column in ['info_cache', 'security_groups']:
+            # Already always joined above
+            continue
         query = query.options(joinedload(column))
     #NOTE(alaski) Stop lazy loading of columns not needed.
     for col in ['metadata', 'system_metadata']:
@@ -1808,7 +1811,7 @@ def instance_get_all_by_filters(context, filters, sort_key, sort_dir,
 
         ['project_id', 'user_id', 'image_ref',
          'vm_state', 'instance_type_id', 'uuid',
-         'metadata', 'host']
+         'metadata', 'host', 'system_metadata']
 
 
     A third type of filter (also using exact matching), filters
@@ -1896,7 +1899,8 @@ def instance_get_all_by_filters(context, filters, sort_key, sort_dir,
     # For other filters that don't match this, we will do regexp matching
     exact_match_filter_names = ['project_id', 'user_id', 'image_ref',
                                 'vm_state', 'instance_type_id', 'uuid',
-                                'metadata', 'host', 'task_state']
+                                'metadata', 'host', 'task_state',
+                                'system_metadata']
 
     # Filter the query
     query_prefix = exact_filter(query_prefix, models.Instance,
@@ -2251,7 +2255,7 @@ def _instance_update(context, instance_uuid, values, copy_old_instance=False,
 
         _handle_objects_related_type_conversions(values)
         instance_ref.update(values)
-        instance_ref.save(session=session)
+        session.add(instance_ref)
 
     return (old_instance_ref, instance_ref)
 
@@ -3193,7 +3197,7 @@ def quota_reserve(context, resources, project_quotas, user_quotas, deltas,
 
         # Apply updates to the usages table
         for usage_ref in user_usages.values():
-            usage_ref.save(session=session)
+            session.add(usage_ref)
 
     if unders:
         LOG.warning(_("Change will make usage less than 0 for the following "
@@ -3311,7 +3315,7 @@ def reservation_expire(context):
         for reservation in reservation_query.join(models.QuotaUsage).all():
             if reservation.delta >= 0:
                 reservation.usage.reserved -= reservation.delta
-                reservation.usage.save(session=session)
+                session.add(reservation.usage)
 
         reservation_query.soft_delete(synchronize_session=False)
 
@@ -3939,8 +3943,8 @@ def migration_update(context, id, values):
     with session.begin():
         migration = _migration_get(context, id, session=session)
         migration.update(values)
-        migration.save(session=session)
-        return migration
+
+    return migration
 
 
 def _migration_get(context, id, session=None):
@@ -5029,9 +5033,9 @@ def aggregate_update(context, aggregate_id, values):
                                    aggregate_id,
                                    values.pop('metadata'),
                                    set_delete=set_delete)
-        with session.begin():
-            aggregate.update(values)
-            aggregate.save(session=session)
+
+        aggregate.update(values)
+        aggregate.save(session=session)
         values['metadata'] = metadata
         return aggregate_get(context, aggregate.id)
     else:
@@ -5284,7 +5288,7 @@ def action_event_start(context, values):
 
         event_ref = models.InstanceActionEvent()
         event_ref.update(values)
-        event_ref.save(session=session)
+        session.add(event_ref)
     return event_ref
 
 
@@ -5646,7 +5650,7 @@ def instance_group_update(context, group_uuid, values):
                                         session=session)
 
         group.update(values)
-        group.save(session=session)
+
         if policies:
             values['policies'] = policies
         if metadata:
