@@ -130,10 +130,6 @@ class HyperVAPITestCase(test.NoDBTestCase):
             pass
         self.stubs.Set(time, 'sleep', fake_sleep)
 
-        def fake_vmutils__init__(self, host='.'):
-            pass
-        vmutils.VMUtils.__init__ = fake_vmutils__init__
-
         self.stubs.Set(pathutils, 'PathUtils', fake.PathUtils)
         self._mox.StubOutWithMock(fake.PathUtils, 'open')
         self._mox.StubOutWithMock(fake.PathUtils, 'copyfile')
@@ -146,6 +142,7 @@ class HyperVAPITestCase(test.NoDBTestCase):
                                   'get_instance_migr_revert_dir')
         self._mox.StubOutWithMock(fake.PathUtils, 'get_instance_dir')
 
+        self.stubs.Set(vmutils, 'VMUtils', fake.FakeVMUtils)
         self._mox.StubOutWithMock(vmutils.VMUtils, 'vm_exists')
         self._mox.StubOutWithMock(vmutils.VMUtils, 'create_vm')
         self._mox.StubOutWithMock(vmutils.VMUtils, 'destroy_vm')

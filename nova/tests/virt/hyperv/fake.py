@@ -18,6 +18,13 @@
 import io
 import os
 
+from nova.virt.hyperv import vmutils
+
+
+class FakeVMUtils(vmutils.VMUtils):
+    def __init(self):
+        pass
+
 
 class PathUtils(object):
     def open(self, path, mode):

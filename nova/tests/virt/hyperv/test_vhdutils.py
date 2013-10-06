@@ -20,71 +20,172 @@ from nova import test
 
 from nova.virt.hyperv import constants
 from nova.virt.hyperv import vhdutils
-from nova.virt.hyperv import vmutils
 
 
 class VHDUtilsTestCase(test.NoDBTestCase):
     """Unit tests for the Hyper-V VHDUtils class."""
 
-    _FAKE_VHD_PATH = "C:\\fake_path.vhdx"
+    _FAKE_VHD_PATH = "C:\\fake_path.vhd"
+    _FAKE_PARENT_VHD_PATH = "C:\\fake_parent_path.vhd"
     _FAKE_FORMAT = 3
-    _FAKE_MAK_INTERNAL_SIZE = 1000
+    _FAKE_MAX_INTERNAL_SIZE = 1000L
+    _FAKE_TYPE = 3
     _FAKE_JOB_PATH = 'fake_job_path'
     _FAKE_RET_VAL = 0
+
+    _VHD_TYPE = constants.DISK_FORMAT_VHD
+
+    _GET_VHD_INFO = 'GetVirtualHardDiskInfo'
+    _VALIDATE_VHD = 'ValidateVirtualHardDisk'
+    _CREATE_DYNAMIC_VHD = 'CreateDynamicVirtualHardDisk'
+    _CREATE_DIFFERENCING_VHD = 'CreateDifferencingVirtualHardDisk'
+    _RECONNECT_PARENT_VHD = 'ReconnectParentVirtualHardDisk'
+    _MERGE_VHD = 'MergeVirtualHardDisk'
+    _RESIZE_VHD = 'ExpandVirtualHardDisk'
 
     def setUp(self):
         self._vhdutils = vhdutils.VHDUtils()
         self._vhdutils._conn = mock.MagicMock()
         self._vhdutils._vmutils = mock.MagicMock()
+
+        self._fake_vhd_info_xml = (
+            '<INSTANCE CLASSNAME="Msvm_VirtualHardDiskSettingData">'
+            '<PROPERTY NAME="BlockSize" TYPE="uint32">'
+            '<VALUE>33554432</VALUE>'
+            '</PROPERTY>'
+            '<PROPERTY NAME="Caption" TYPE="string">'
+            '<VALUE>Virtual Hard Disk Setting Data</VALUE>'
+            '</PROPERTY>'
+            '<PROPERTY NAME="Description" TYPE="string">'
+            '<VALUE>Setting Data for a Virtual Hard Disk.</VALUE>'
+            '</PROPERTY>'
+            '<PROPERTY NAME="ElementName" TYPE="string">'
+            '<VALUE>fake_path.vhdx</VALUE>'
+            '</PROPERTY>'
+            '<PROPERTY NAME="Format" TYPE="uint16">'
+            '<VALUE>%(format)s</VALUE>'
+            '</PROPERTY>'
+            '<PROPERTY NAME="InstanceID" TYPE="string">'
+            '<VALUE>52794B89-AC06-4349-AC57-486CAAD52F69</VALUE>'
+            '</PROPERTY>'
+            '<PROPERTY NAME="LogicalSectorSize" TYPE="uint32">'
+            '<VALUE>512</VALUE>'
+            '</PROPERTY>'
+            '<PROPERTY NAME="MaxInternalSize" TYPE="uint64">'
+            '<VALUE>%(max_internal_size)s</VALUE>'
+            '</PROPERTY>'
+            '<PROPERTY NAME="ParentPath" TYPE="string">'
+            '<VALUE>%(parent_path)s</VALUE>'
+            '</PROPERTY>'
+            '<PROPERTY NAME="Path" TYPE="string">'
+            '<VALUE>%(path)s</VALUE>'
+            '</PROPERTY>'
+            '<PROPERTY NAME="PhysicalSectorSize" TYPE="uint32">'
+            '<VALUE>4096</VALUE>'
+            '</PROPERTY>'
+            '<PROPERTY NAME="Type" TYPE="uint16">'
+            '<VALUE>%(type)s</VALUE>'
+            '</PROPERTY>'
+            '</INSTANCE>' %
+            {'path': self._FAKE_VHD_PATH,
+             'parent_path': self._FAKE_PARENT_VHD_PATH,
+             'format': self._FAKE_FORMAT,
+             'max_internal_size': self._FAKE_MAX_INTERNAL_SIZE,
+             'type': self._FAKE_TYPE})
+
+        self._fake_vhd_info = {
+            'ParentPath': self._FAKE_PARENT_VHD_PATH,
+            'MaxInternalSize': self._FAKE_MAX_INTERNAL_SIZE,
+            'Type': self._FAKE_TYPE}
+
         super(VHDUtilsTestCase, self).setUp()
+
+    def test_validate_vhd(self):
+        mock_img_svc = self._vhdutils._conn.Msvm_ImageManagementService()[0]
+        getattr(mock_img_svc, self._VALIDATE_VHD).return_value = (
+            self._FAKE_JOB_PATH, self._FAKE_RET_VAL)
+
+        self._vhdutils.validate_vhd(self._FAKE_VHD_PATH)
+        getattr(mock_img_svc, self._VALIDATE_VHD).assert_called_once_with(
+            Path=self._FAKE_VHD_PATH)
+
+    def test_get_vhd_info(self):
+        self._mock_get_vhd_info()
+        vhd_info = self._vhdutils.get_vhd_info(self._FAKE_VHD_PATH)
+        self.assertEqual(self._fake_vhd_info, vhd_info)
+
+    def _mock_get_vhd_info(self):
+        mock_img_svc = self._vhdutils._conn.Msvm_ImageManagementService()[0]
+        getattr(mock_img_svc, self._GET_VHD_INFO).return_value = (
+            self._fake_vhd_info_xml, self._FAKE_JOB_PATH, self._FAKE_RET_VAL)
 
     def test_create_dynamic_vhd(self):
         self._vhdutils.get_vhd_info = mock.MagicMock(
             return_value={'Format': self._FAKE_FORMAT})
 
         mock_img_svc = self._vhdutils._conn.Msvm_ImageManagementService()[0]
-        mock_img_svc.CreateDynamicVirtualHardDisk.return_value = (
+        getattr(mock_img_svc, self._CREATE_DYNAMIC_VHD).return_value = (
             self._FAKE_JOB_PATH, self._FAKE_RET_VAL)
 
         self._vhdutils.create_dynamic_vhd(self._FAKE_VHD_PATH,
-                                          self._FAKE_MAK_INTERNAL_SIZE,
-                                          constants.DISK_FORMAT_VHD)
+                                          self._FAKE_MAX_INTERNAL_SIZE,
+                                          self._VHD_TYPE)
 
-        mock_img_svc.CreateDynamicVirtualHardDisk.assert_called_once_with(
+        self.assertTrue(getattr(mock_img_svc, self._CREATE_DYNAMIC_VHD).called)
+
+    def test_create_differencing_vhd(self):
+        self._vhdutils.get_vhd_info = mock.MagicMock(
+            return_value={'ParentPath': self._FAKE_PARENT_VHD_PATH,
+                          'Format': self._FAKE_FORMAT})
+
+        mock_img_svc = self._vhdutils._conn.Msvm_ImageManagementService()[0]
+        getattr(mock_img_svc, self._CREATE_DIFFERENCING_VHD).return_value = (
+            self._FAKE_JOB_PATH, self._FAKE_RET_VAL)
+
+        self._vhdutils.create_differencing_vhd(self._FAKE_VHD_PATH,
+                                               self._FAKE_PARENT_VHD_PATH)
+
+        self.assertTrue(
+            getattr(mock_img_svc, self._CREATE_DIFFERENCING_VHD).called)
+
+    def test_reconnect_parent_vhd(self):
+        mock_img_svc = self._vhdutils._conn.Msvm_ImageManagementService()[0]
+        getattr(mock_img_svc, self._RECONNECT_PARENT_VHD).return_value = (
+            self._FAKE_JOB_PATH, self._FAKE_RET_VAL)
+
+        self._vhdutils.reconnect_parent_vhd(self._FAKE_VHD_PATH,
+                                            self._FAKE_PARENT_VHD_PATH)
+        getattr(mock_img_svc,
+                self._RECONNECT_PARENT_VHD).assert_called_once_with(
+            ChildPath=self._FAKE_VHD_PATH,
+            ParentPath=self._FAKE_PARENT_VHD_PATH,
+            Force=True)
+
+    def test_merge_vhd(self):
+        mock_img_svc = self._vhdutils._conn.Msvm_ImageManagementService()[0]
+        getattr(mock_img_svc, self._MERGE_VHD).return_value = (
+            self._FAKE_JOB_PATH, self._FAKE_RET_VAL)
+
+        self._vhdutils.merge_vhd(self._FAKE_VHD_PATH, self._FAKE_VHD_PATH)
+        getattr(mock_img_svc, self._MERGE_VHD).assert_called_once_with(
+            SourcePath=self._FAKE_VHD_PATH,
+            DestinationPath=self._FAKE_VHD_PATH)
+
+    def test_resize_vhd(self):
+        mock_img_svc = self._vhdutils._conn.Msvm_ImageManagementService()[0]
+        getattr(mock_img_svc, self._RESIZE_VHD).return_value = (
+            self._FAKE_JOB_PATH, self._FAKE_RET_VAL)
+
+        self._vhdutils._get_internal_vhd_size_by_file_size = mock.MagicMock(
+            return_value=self._FAKE_MAX_INTERNAL_SIZE)
+
+        self._vhdutils.resize_vhd(self._FAKE_VHD_PATH,
+                                  self._FAKE_MAX_INTERNAL_SIZE)
+
+        getattr(mock_img_svc, self._RESIZE_VHD).assert_called_once_with(
             Path=self._FAKE_VHD_PATH,
-            MaxInternalSize=self._FAKE_MAK_INTERNAL_SIZE)
+            MaxInternalSize=self._FAKE_MAX_INTERNAL_SIZE)
 
-    def test_get_internal_vhd_size_by_file_size_fixed(self):
-        vhdutil = vhdutils.VHDUtils()
-        root_vhd_size = 1 * 1024 ** 3
-        vhdutil.get_vhd_info = mock.MagicMock()
-        vhdutil.get_vhd_info.return_value = {'Type': constants.VHD_TYPE_FIXED}
-
-        real_size = vhdutil._get_internal_vhd_size_by_file_size(None,
-                                                                root_vhd_size)
-        expected_vhd_size = 1 * 1024 ** 3 - 512
-        self.assertEqual(expected_vhd_size, real_size)
-
-    def test_get_internal_vhd_size_by_file_size_dynamic(self):
-        vhdutil = vhdutils.VHDUtils()
-        root_vhd_size = 20 * 1024 ** 3
-        vhdutil.get_vhd_info = mock.MagicMock()
-        vhdutil.get_vhd_info.return_value = {'Type':
-                                             constants.VHD_TYPE_DYNAMIC}
-        vhdutil._get_vhd_dynamic_blk_size = mock.MagicMock()
-        vhdutil._get_vhd_dynamic_blk_size.return_value = 2097152
-
-        real_size = vhdutil._get_internal_vhd_size_by_file_size(None,
-                                                                root_vhd_size)
-        expected_vhd_size = 20 * 1024 ** 3 - 43008
-        self.assertEqual(expected_vhd_size, real_size)
-
-    def test_get_internal_vhd_size_by_file_size_unsupported(self):
-        vhdutil = vhdutils.VHDUtils()
-        root_vhd_size = 20 * 1024 ** 3
-        vhdutil.get_vhd_info = mock.MagicMock()
-        vhdutil.get_vhd_info.return_value = {'Type': 5}
-
-        self.assertRaises(vmutils.HyperVException,
-                          vhdutil._get_internal_vhd_size_by_file_size,
-                          None, root_vhd_size)
+    def test_get_supported_vhd_format(self):
+        format = self._vhdutils.get_best_supported_vhd_format()
+        self.assertEqual(self._VHD_TYPE, format)
