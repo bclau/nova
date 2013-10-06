@@ -19,10 +19,12 @@ Test suite for the Hyper-V driver and related APIs.
 """
 
 import io
+import mock
 import mox
 import os
 import platform
 import shutil
+import sys
 import time
 import uuid
 
@@ -129,10 +131,6 @@ class HyperVAPITestCase(test.NoDBTestCase):
         def fake_sleep(ms):
             pass
         self.stubs.Set(time, 'sleep', fake_sleep)
-
-        def fake_vmutils__init__(self, host='.'):
-            pass
-        vmutils.VMUtils.__init__ = fake_vmutils__init__
 
         self.stubs.Set(pathutils, 'PathUtils', fake.PathUtils)
         self._mox.StubOutWithMock(fake.PathUtils, 'open')

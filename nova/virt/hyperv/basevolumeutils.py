@@ -57,7 +57,6 @@ class BaseVolumeUtils(object):
 
     def get_iscsi_initiator(self):
         """Get iscsi initiator name for this machine."""
-
         computer_system = self._conn_cimv2.Win32_ComputerSystem()[0]
         hostname = computer_system.name
         keypath = ("SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\"

@@ -67,6 +67,8 @@ class VMUtils(object):
     _IDE_CTRL_RES_SUB_TYPE = 'Microsoft Emulated IDE Controller'
     _SCSI_CTRL_RES_SUB_TYPE = 'Microsoft Synthetic SCSI Controller'
 
+    _VIRTUAL_SYSTEM_TYPE_REALIZED = 3
+
     _vm_power_states_map = {constants.HYPERV_VM_STATE_ENABLED: 2,
                             constants.HYPERV_VM_STATE_DISABLED: 3,
                             constants.HYPERV_VM_STATE_REBOOT: 10,
@@ -148,7 +150,8 @@ class VMUtils(object):
         vmsettings = vm.associators(
             wmi_result_class='Msvm_VirtualSystemSettingData')
         # Avoid snapshots
-        return [s for s in vmsettings if s.SettingType == 3][0]
+        return [s for s in vmsettings if
+                s.SettingType == self._VIRTUAL_SYSTEM_TYPE_REALIZED][0]
 
     def _set_vm_memory(self, vm, vmsetting, memory_mb, dynamic_memory_ratio):
         mem_settings = vmsetting.associators(
@@ -361,6 +364,10 @@ class VMUtils(object):
         vm = self._lookup_vm_check(vm_name)
 
         self._add_virt_resource(new_nic_data, vm.path_())
+
+    def get_vm_state(self, vm_name):
+        settings = self.get_vm_summary_info(vm_name)
+        return settings['EnabledState']
 
     def set_vm_state(self, vm_name, req_state):
         """Set the desired state of the VM."""
