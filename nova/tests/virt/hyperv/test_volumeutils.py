@@ -1,4 +1,6 @@
-#  Copyright 2014 Cloudbase Solutions Srl
+# Copyright 2014 Cloudbase Solutions Srl
+#
+# All Rights Reserved.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
 #    not use this file except in compliance with the License. You may obtain
@@ -15,7 +17,7 @@
 import mock
 from oslo.config import cfg
 
-from nova import test
+from nova.tests.virt.hyperv import test_basevolumeutils
 from nova.virt.hyperv import vmutils
 from nova.virt.hyperv import volumeutils
 
@@ -24,7 +26,7 @@ CONF.import_opt('volume_attach_retry_count', 'nova.virt.hyperv.volumeops',
                 'hyperv')
 
 
-class VolumeUtilsTestCase(test.NoDBTestCase):
+class VolumeUtilsTestCase(test_basevolumeutils.BaseVolumeUtilsTestCase):
     """Unit tests for the Hyper-V VolumeUtils class."""
 
     _FAKE_PORTAL_ADDR = '10.1.1.1'
@@ -32,10 +34,16 @@ class VolumeUtilsTestCase(test.NoDBTestCase):
     _FAKE_LUN = 0
     _FAKE_TARGET = 'iqn.2010-10.org.openstack:fake_target'
 
+    _FAKE_STDOUT_VALUE_FAILED = 'fake_stdout_value_failed'
+    _FAKE_STDOUT_VALUE = 'The operation completed successfully'
+    _FAKE_STDERR_VALUE = 'fake_stderr_value'
+    _FAKE_TARGET_PORTAL = 'fake_target_portal'
+
     def setUp(self):
         super(VolumeUtilsTestCase, self).setUp()
         self._volutils = volumeutils.VolumeUtils()
         self._volutils._conn_wmi = mock.MagicMock()
+        self._volutils._conn_cimv2 = mock.MagicMock()
         self.flags(volume_attach_retry_count=4, group='hyperv')
         self.flags(volume_attach_retry_interval=0, group='hyperv')
 
@@ -132,3 +140,15 @@ class VolumeUtilsTestCase(test.NoDBTestCase):
 
     def test_execute_exception(self):
         self._test_execute_wrapper(False)
+
+    @mock.patch.object(volumeutils, 'utils')
+    def test_logout_storage_target(self, mock_utils):
+        mock_utils.execute.return_value = (self._FAKE_STDOUT_VALUE,
+                                           self._FAKE_STDERR_VALUE)
+        session = mock.MagicMock()
+        session.SessionId = self._FAKE_SESSION_ID
+        self._volutils._conn_wmi.query.return_value = [session]
+
+        self._volutils.logout_storage_target(self._FAKE_IQN)
+        mock_utils.execute.assert_called_with(
+            'iscsicli.exe', 'logouttarget', self._FAKE_SESSION_ID)
