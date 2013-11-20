@@ -141,6 +141,11 @@ class VolumeOps(object):
                                                       ctrller_path,
                                                       slot,
                                                       mounted_disk_path)
+
+            if CONF.hyperv.enable_instance_metrics_collection:
+                self._vmutils.enable_volume_metrics_collection(
+                    instance_name, mounted_disk_path)
+
         except Exception as exn:
             LOG.exception(_('Attach volume failed: %s'), exn)
             if target_iqn:
