@@ -67,6 +67,10 @@ class VMUtils(object):
     _IDE_CTRL_RES_SUB_TYPE = 'Microsoft Emulated IDE Controller'
     _SCSI_CTRL_RES_SUB_TYPE = 'Microsoft Synthetic SCSI Controller'
 
+    _VIRTUAL_SYSTEM_SETTING_DATA_CLASS = 'Msvm_VirtualSystemSettingData'
+    _RESOURCE_ALLOC_SETTING_DATA_CLASS = 'Msvm_ResourceAllocationSettingData'
+    _STORAGE_ALLOC_SETTING_DATA_CLASS = _RESOURCE_ALLOC_SETTING_DATA_CLASS
+
     _vm_power_states_map = {constants.HYPERV_VM_STATE_ENABLED: 2,
                             constants.HYPERV_VM_STATE_DISABLED: 3,
                             constants.HYPERV_VM_STATE_REBOOT: 10,
@@ -376,17 +380,7 @@ class VMUtils(object):
 
     def get_vm_storage_paths(self, vm_name):
         vm = self._lookup_vm_check(vm_name)
-
-        vmsettings = vm.associators(
-            wmi_result_class='Msvm_VirtualSystemSettingData')
-        rasds = vmsettings[0].associators(
-            wmi_result_class='Msvm_ResourceAllocationSettingData')
-        disk_resources = [r for r in rasds
-                          if r.ResourceSubType ==
-                          self._IDE_DISK_RES_SUB_TYPE]
-        volume_resources = [r for r in rasds
-                            if r.ResourceSubType ==
-                            self._PHYS_DISK_RES_SUB_TYPE]
+        (disk_resources, volume_resources) = self._get_vm_disks(vm)
 
         volume_drives = []
         for volume_resource in volume_resources:
@@ -398,6 +392,20 @@ class VMUtils(object):
             disk_files.extend([c for c in disk_resource.Connection])
 
         return (disk_files, volume_drives)
+
+    def _get_vm_disks(self, vm):
+        vmsettings = vm.associators(
+            wmi_result_class=self._VIRTUAL_SYSTEM_SETTING_DATA_CLASS)
+        rasds = vmsettings[0].associators(
+            wmi_result_class=self._STORAGE_ALLOC_SETTING_DATA_CLASS)
+        disk_resources = [r for r in rasds if
+                          r.ResourceSubType in
+                          [self._IDE_DISK_RES_SUB_TYPE,
+                           self._IDE_DVD_RES_SUB_TYPE]]
+        volume_resources = [r for r in rasds if
+                            r.ResourceSubType == self._PHYS_DISK_RES_SUB_TYPE]
+
+        return (disk_resources, volume_resources)
 
     def destroy_vm(self, vm_name):
         vm = self._lookup_vm_check(vm_name)
