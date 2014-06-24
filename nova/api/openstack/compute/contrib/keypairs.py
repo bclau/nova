@@ -24,6 +24,7 @@ from nova.api.openstack import wsgi
 from nova.api.openstack import xmlutil
 from nova.compute import api as compute_api
 from nova import exception
+from nova.objects import keypair as keypair_obj
 from nova.openstack.common.gettextutils import _
 
 
@@ -57,6 +58,7 @@ class KeypairController(object):
             'name': keypair.name,
             'public_key': keypair.public_key,
             'fingerprint': keypair.fingerprint,
+            'type': keypair.type,
             }
         for attr in attrs:
             clean[attr] = keypair[attr]
@@ -69,11 +71,14 @@ class KeypairController(object):
         Sending name will generate a key and return private_key
         and fingerprint.
 
+        Keypair will be of type ssh or certificate, specified by key_type.
+
         You can send a public_key to add an existing ssh key
 
         params: keypair object with:
             name (required) - string
             public_key (optional) - string
+            key_type (optional) - string
         """
 
         context = req.environ['nova.context']
@@ -82,6 +87,7 @@ class KeypairController(object):
         try:
             params = body['keypair']
             name = params['name']
+            key_type = params.get('key_type', keypair_obj.KEYPAIR_TYPE_SSH)
         except KeyError:
             msg = _("Invalid request body")
             raise webob.exc.HTTPBadRequest(explanation=msg)
@@ -90,11 +96,11 @@ class KeypairController(object):
             if 'public_key' in params:
                 keypair = self.api.import_key_pair(context,
                                               context.user_id, name,
-                                              params['public_key'])
+                                              params['public_key'], key_type)
                 keypair = self._filter_keypair(keypair, user_id=True)
             else:
                 keypair, private_key = self.api.create_key_pair(
-                    context, context.user_id, name)
+                    context, context.user_id, name, key_type)
                 keypair = self._filter_keypair(keypair, user_id=True)
                 keypair['private_key'] = private_key
 

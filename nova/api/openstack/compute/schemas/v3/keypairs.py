@@ -23,6 +23,7 @@ create = {
             'properties': {
                 'name': parameter_types.name,
                 'public_key': {'type': 'string'},
+                'type': {'type': 'string'},
             },
             'required': ['name'],
             'additionalProperties': False,

@@ -32,6 +32,7 @@ from nova import context
 from nova import network
 from nova import objects
 from nova.objects import base as obj_base
+from nova.objects import keypair as keypair_obj
 from nova.objects import security_group as secgroup_obj
 from nova.openstack.common import importutils
 from nova.openstack.common import log as logging
@@ -253,6 +254,7 @@ class InstanceMetadata():
         # meta-data/public-keys/ : '0=%s' % keyname
         # meta-data/public-keys/0/ : 'openssh-key'
         # meta-data/public-keys/0/openssh-key : '%s' % publickey
+
         if self.instance['key_name']:
             meta_data['public-keys'] = {
                 '0': {'_name': "0=" + self.instance['key_name'],
@@ -319,6 +321,8 @@ class InstanceMetadata():
             metadata['public_keys'] = {
                 self.instance['key_name']: self.instance['key_data']
             }
+            metadata['x509_content'] = self._get_x509_metadata_content()
+
         metadata['hostname'] = self._get_hostname()
         metadata['name'] = self.instance['display_name']
         metadata['launch_index'] = self.instance['launch_index']
@@ -329,6 +333,14 @@ class InstanceMetadata():
 
         self.set_mimetype(MIME_TYPE_APPLICATION_JSON)
         return json.dumps(metadata)
+
+    def _get_x509_metadata_content(self):
+        keypair = keypair_obj.KeyPair.get_by_name(context.get_admin_context(),
+                                                  self.instance['user_id'],
+                                                  self.instance['key_name'])
+        if keypair.type == keypair_obj.KEYPAIR_TYPE_X509:
+            return {self.instance['key_name']: self.instance['key_data']}
+        return {}
 
     def _handle_content(self, path_tokens):
         if len(path_tokens) == 1:

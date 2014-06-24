@@ -130,6 +130,25 @@ def _generate_fingerprint(public_key_file):
     return fingerprint
 
 
+def _generate_x509_fingerprint(pem_key_file):
+    (out, _err) = utils.execute('openssl', 'x509', '-inform', 'PEM', '-in',
+                                pem_key_file, '-fingerprint', '-noout')
+    fingerprint = string.strip(out.rpartition('=')[2])
+    return fingerprint
+
+
+def generate_x509_fingerprint(pem_key):
+    with utils.tempdir() as tmpdir:
+        try:
+            pubfile = os.path.join(tmpdir, 'temp.pem')
+            with open(pubfile, 'w') as f:
+                f.write(pem_key)
+            return _generate_x509_fingerprint(pubfile)
+        except processutils.ProcessExecutionError:
+            raise exception.InvalidKeypair(
+                reason=_('failed to generate x509 fingerprint'))
+
+
 def generate_fingerprint(public_key):
     with utils.tempdir() as tmpdir:
         try:
@@ -337,6 +356,54 @@ def generate_x509_cert(user_id, project_id, bits=1024):
             'file_name': fname}
     db.certificate_create(context.get_admin_context(), cert)
     return (private_key, signed_csr)
+
+
+def generate_winrm_x509_cert(user_id, project_id, bits=2048):
+    """Generate a cert for passwordless auth for user in project."""
+    subject = _user_cert_subject(user_id, project_id)
+    upn = '%s@localhost' % user_id
+
+    with utils.tempdir() as tmpdir:
+        keyfile = os.path.abspath(os.path.join(tmpdir, 'temp.key'))
+        pemfile = os.path.abspath(os.path.join(tmpdir, 'temp.pem'))
+        conffile = os.path.abspath(os.path.join(tmpdir, 'temp.conf'))
+
+        _create_x509_openssl_config(conffile, upn)
+
+        utils.execute('openssl', 'req', '-x509', '-nodes', '-days', '3650',
+                      '-config', conffile, '-newkey', 'rsa:%s' % bits, '-out',
+                      pemfile, '-outform', 'PEM', '-keyout', keyfile, '-subj',
+                      subject, '-extensions', 'v3_req_client')
+
+        fingerprint = _generate_x509_fingerprint(pemfile)
+        serial = ''.join(fingerprint.split(':'))
+
+        _ca_folder = ca_folder(project_id)
+        fileutils.ensure_tree(_ca_folder)
+        pkcsfile = os.path.join(_ca_folder, 'newcerts/%s.pcks12' % serial)
+
+        utils.execute('openssl', 'pkcs12', '-export', '-in', pemfile, '-inkey',
+                      keyfile, '-out', pkcsfile, '-password', 'pass:')
+
+        private_key = open(keyfile).read()
+        certificate = open(pkcsfile, 'rb').read()
+        certificate = certificate.encode('base64')
+
+    cert = {'user_id': user_id,
+            'project_id': project_id,
+            'file_name': pkcsfile}
+    db.certificate_create(context.get_admin_context(), cert)
+    return (private_key, certificate, fingerprint)
+
+
+def _create_x509_openssl_config(conffile, upn):
+    with open(conffile, 'w') as file:
+            file.write('distinguished_name = req_distinguished_name\n')
+            file.write('[req_distinguished_name]\n')
+            file.write('[v3_req_client]\n')
+            file.write('extendedKeyUsage = clientAuth\n')
+            file.write('subjectAltName = otherName:'
+                       '1.3.6.1.4.1.311.20.2.3;UTF8:%s\n' % upn)
 
 
 def _ensure_project_folder(project_id):

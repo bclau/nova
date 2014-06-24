@@ -17,6 +17,9 @@ from nova import exception
 from nova.objects import base
 from nova.objects import fields
 
+KEYPAIR_TYPE_SSH = 'ssh'
+KEYPAIR_TYPE_X509 = 'x509'
+
 
 class KeyPair(base.NovaPersistentObject, base.NovaObject):
     # Version 1.0: Initial version
@@ -29,6 +32,7 @@ class KeyPair(base.NovaPersistentObject, base.NovaObject):
         'user_id': fields.StringField(nullable=True),
         'fingerprint': fields.StringField(nullable=True),
         'public_key': fields.StringField(nullable=True),
+        'type': fields.StringField(nullable=True),
         }
 
     @staticmethod

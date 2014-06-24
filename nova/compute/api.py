@@ -3506,19 +3506,21 @@ class KeypairAPI(base.Base):
             raise exception.KeypairLimitExceeded()
 
     @wrap_exception()
-    def import_key_pair(self, context, user_id, key_name, public_key):
+    def import_key_pair(self, context, user_id, key_name, public_key,
+                        key_type=keypair_obj.KEYPAIR_TYPE_SSH):
         """Import a key pair using an existing public key."""
         self._validate_new_key_pair(context, user_id, key_name)
 
         self._notify(context, 'import.start', key_name)
 
-        fingerprint = crypto.generate_fingerprint(public_key)
+        fingerprint = self._generate_fingerprint(public_key, key_type)
 
         keypair = keypair_obj.KeyPair()
         keypair.user_id = user_id
         keypair.name = key_name
         keypair.fingerprint = fingerprint
         keypair.public_key = public_key
+        keypair.type = key_type
         keypair.create(context)
 
         self._notify(context, 'import.end', key_name)
@@ -3526,24 +3528,46 @@ class KeypairAPI(base.Base):
         return keypair
 
     @wrap_exception()
-    def create_key_pair(self, context, user_id, key_name):
+    def create_key_pair(self, context, user_id, key_name,
+                        key_type=keypair_obj.KEYPAIR_TYPE_SSH):
         """Create a new key pair."""
         self._validate_new_key_pair(context, user_id, key_name)
 
         self._notify(context, 'create.start', key_name)
 
-        private_key, public_key, fingerprint = crypto.generate_key_pair()
+        private_key, public_key, fingerprint = self._generate_key_pair(
+            context, user_id, key_type)
 
         keypair = keypair_obj.KeyPair()
         keypair.user_id = user_id
         keypair.name = key_name
         keypair.fingerprint = fingerprint
         keypair.public_key = public_key
+        keypair.type = key_type
+        LOG.warning(keypair)
         keypair.create(context)
 
         self._notify(context, 'create.end', key_name)
 
         return keypair, private_key
+
+    def _generate_fingerprint(self, public_key, key_type):
+        if key_type == keypair_obj.KEYPAIR_TYPE_SSH:
+            return crypto.generate_fingerprint(public_key)
+        elif key_type == keypair_obj.KEYPAIR_TYPE_X509:
+            return crypto.generate_x509_fingerprint(public_key)
+        else:
+            raise exception.InvalidKeypair(
+                reason=_('Specified Keypair type "%s" is invalid' % key_type))
+
+    def _generate_key_pair(self, context, user_id, key_type):
+        if key_type == keypair_obj.KEYPAIR_TYPE_SSH:
+            return crypto.generate_key_pair()
+        elif key_type == keypair_obj.KEYPAIR_TYPE_X509:
+            return crypto.generate_winrm_x509_cert(user_id, context.project_id)
+        else:
+            raise exception.InvalidKeypair(
+                reason=_('Specified Keypair type "%s" is invalid' % key_type))
 
     @wrap_exception()
     def delete_key_pair(self, context, user_id, key_name):
