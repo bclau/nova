@@ -26,9 +26,7 @@ from nova.openstack.common import excutils
 from nova.openstack.common.gettextutils import _
 from nova.openstack.common import log as logging
 from nova.virt import driver
-from nova.virt.hyperv import constants
 from nova.virt.hyperv import utilsfactory
-from nova.virt.hyperv import vmutils
 
 LOG = logging.getLogger(__name__)
 
@@ -126,14 +124,18 @@ class VolumeOps(object):
             #Getting the mounted disk
             mounted_disk_path = self._get_mounted_disk_from_lun(target_iqn,
                                                                 target_lun)
-
+            ctrller_path = None
             if ebs_root:
                 #Find the IDE controller for the vm.
+                #If the vm has no IDE controller (generation 2 VM)
+                #ctrller_path will be None, and the disk will be attached
+                # to the SCSI controller.
                 ctrller_path = self._vmutils.get_vm_ide_controller(
                     instance_name, 0)
                 #Attaching to the first slot
                 slot = 0
-            else:
+
+            if not ctrller_path:
                 #Find the SCSI controller for the vm
                 ctrller_path = self._vmutils.get_vm_scsi_controller(
                     instance_name)
@@ -151,13 +153,7 @@ class VolumeOps(object):
                     self._volutils.logout_storage_target(target_iqn)
 
     def _get_free_controller_slot(self, scsi_controller_path):
-        attached_disks = self._vmutils.get_attached_disks(scsi_controller_path)
-        used_slots = [int(disk.AddressOnParent) for disk in attached_disks]
-
-        for slot in xrange(constants.SCSI_CONTROLLER_SLOTS_NUMBER):
-            if slot not in used_slots:
-                return slot
-        raise vmutils.HyperVException("Exceeded the maximum number of slots")
+        return self._vmutils.get_free_controller_slot(scsi_controller_path)
 
     def detach_volumes(self, block_device_info, instance_name):
         mapping = driver.block_device_info_get_mapping(block_device_info)

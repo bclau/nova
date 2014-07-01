@@ -30,6 +30,7 @@ class VMUtilsTestCase(test.NoDBTestCase):
     _FAKE_VHD_PATH = "fake_vhd_path"
     _FAKE_DVD_PATH = "fake_dvd_path"
     _FAKE_VOLUME_DRIVE_PATH = "fake_volume_drive_path"
+    _FAKE_SCSI_CONTROLLER_PATH = "fake_scsi_controller_path"
 
     _FAKE_PATH = "fake_path"
     _FAKE_CTRL_PATH = "fake_ctrl_path"
@@ -82,6 +83,53 @@ class VMUtilsTestCase(test.NoDBTestCase):
             self.assertTrue(mock_s.DynamicMemoryEnabled)
         else:
             self.assertFalse(mock_s.DynamicMemoryEnabled)
+
+    @mock.patch("nova.virt.hyperv.vmutils.VMUtils.get_attached_disks")
+    def test_get_free_controller_slot(self, mock_get_attached_disks):
+        mock_disk = mock.MagicMock()
+        mock_disk.AddressOnParent = 3
+        mock_get_attached_disks.return_value = [mock_disk]
+
+        response = self._vmutils.get_free_controller_slot(
+            self._FAKE_SCSI_CONTROLLER_PATH)
+
+        mock_get_attached_disks.assert_called_once_with(
+            self._FAKE_SCSI_CONTROLLER_PATH)
+
+        self.assertEquals(response, 0)
+
+    @mock.patch("nova.virt.hyperv.vmutils.VMUtils.get_attached_disks")
+    def test_get_free_controller_slot_exception(self, mock_get_attached_disks):
+        mock_disks = [mock.MagicMock(AddressOnParent=i) for i in
+                      range(constants.SCSI_CONTROLLER_SLOTS_NUMBER)]
+        mock_get_attached_disks.return_value = mock_disks
+
+        self.assertRaises(vmutils.HyperVException,
+                          self._vmutils.get_free_controller_slot,
+                          self._FAKE_SCSI_CONTROLLER_PATH)
+
+        mock_get_attached_disks.assert_called_once_with(
+            self._FAKE_SCSI_CONTROLLER_PATH)
+
+    @mock.patch("nova.virt.hyperv.vmutils.VMUtils.get_free_controller_slot")
+    @mock.patch("nova.virt.hyperv.vmutils.VMUtils._get_vm_scsi_controller")
+    def test_attach_scsi_drive(self, mock_get_vm_scsi_controller,
+                               mock_get_free_controller_slot):
+        mock_vm = self._lookup_vm()
+        mock_get_vm_scsi_controller.return_value = self._FAKE_CTRL_PATH
+        mock_get_free_controller_slot.return_value = self._FAKE_DRIVE_ADDR
+
+        with mock.patch.object(self._vmutils,
+                               '_attach_drive') as mock_attach_drive:
+            self._vmutils.attach_scsi_drive(mock_vm, self._FAKE_PATH,
+                                            constants.DISK)
+
+            mock_get_vm_scsi_controller.assert_called_once_with(mock_vm)
+            mock_get_free_controller_slot.assert_called_once_with(
+                self._FAKE_CTRL_PATH)
+            mock_attach_drive.assert_called_once_with(
+                mock_vm, self._FAKE_PATH, self._FAKE_CTRL_PATH,
+                self._FAKE_DRIVE_ADDR, constants.DISK)
 
     @mock.patch("nova.virt.hyperv.vmutils.VMUtils._get_vm_ide_controller")
     def test_attach_ide_drive(self, mock_get_vm_ide_controller):

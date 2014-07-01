@@ -72,6 +72,12 @@ def fetch(context, image_href, path, _user_id, _project_id, max_size=0):
         image_service.download(context, image_id, dst_path=path)
 
 
+def get_info(context, image_href):
+    (image_service, image_id) = glance.get_remote_image_service(context,
+                                                                image_href)
+    return image_service.show(context, image_id)
+
+
 def fetch_to_raw(context, image_href, path, user_id, project_id, max_size=0):
     path_tmp = "%s.part" % path
     fetch(context, image_href, path_tmp, user_id, project_id,
