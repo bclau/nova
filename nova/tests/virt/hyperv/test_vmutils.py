@@ -17,6 +17,7 @@ import mock
 
 from nova import test
 
+from nova.virt.hyperv import constants
 from nova.virt.hyperv import vmutils
 
 
@@ -29,6 +30,7 @@ class VMUtilsTestCase(test.NoDBTestCase):
     _FAKE_VHD_PATH = "fake_vhd_path"
     _FAKE_DVD_PATH = "fake_dvd_path"
     _FAKE_VOLUME_DRIVE_PATH = "fake_volume_drive_path"
+    _FAKE_SCSI_CONTROLLER_PATH = "fake scsi controller path"
 
     def setUp(self):
         self._vmutils = vmutils.VMUtils()
@@ -76,6 +78,33 @@ class VMUtilsTestCase(test.NoDBTestCase):
             self.assertTrue(mock_s.DynamicMemoryEnabled)
         else:
             self.assertFalse(mock_s.DynamicMemoryEnabled)
+
+    @mock.patch("nova.virt.hyperv.vmutils.VMUtils.get_attached_disks")
+    def test_get_free_controller_slot(self, mock_get_attached_disks):
+        mock_disk = mock.MagicMock()
+        mock_disk.AddressOnParent = 3
+        mock_get_attached_disks.return_value = [mock_disk]
+
+        response = self._vmutils._get_free_controller_slot(
+            self._FAKE_SCSI_CONTROLLER_PATH)
+
+        mock_get_attached_disks.assert_called_once_with(
+            self._FAKE_SCSI_CONTROLLER_PATH)
+
+        self.assertEquals(response, 0)
+
+    @mock.patch("nova.virt.hyperv.vmutils.VMUtils.get_attached_disks")
+    def test_get_free_controller_slot_exception(self, mock_get_attached_disks):
+        mock_disks = [mock.MagicMock(AddressOnParent=i) for i in
+                      range(constants.SCSI_CONTROLLER_SLOTS_NUMBER)]
+        mock_get_attached_disks.return_value = mock_disks
+
+        self.assertRaises(vmutils.HyperVException,
+                          self._vmutils._get_free_controller_slot,
+                          self._FAKE_SCSI_CONTROLLER_PATH)
+
+        mock_get_attached_disks.assert_called_once_with(
+            self._FAKE_SCSI_CONTROLLER_PATH)
 
     @mock.patch('nova.virt.hyperv.vmutils.VMUtils._get_vm_disks')
     def test_get_vm_storage_paths(self, mock_get_vm_disks):

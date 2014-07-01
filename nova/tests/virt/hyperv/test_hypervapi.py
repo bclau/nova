@@ -50,6 +50,7 @@ from nova.virt.hyperv import basevolumeutils
 from nova.virt.hyperv import constants
 from nova.virt.hyperv import driver as driver_hyperv
 from nova.virt.hyperv import hostutils
+from nova.virt.hyperv import imagecache
 from nova.virt.hyperv import livemigrationutils
 from nova.virt.hyperv import networkutils
 from nova.virt.hyperv import networkutilsv2
@@ -120,6 +121,10 @@ class HyperVAPIBaseTestCase(test.NoDBTestCase):
                         raise vmutils.HyperVException(
                             "Simulated update failure")
                     self._image_metadata = image_metadata
+
+                def show(self_fake, context, image_id):
+                    return {'properties': {
+                            'vm_generation': constants.VM_GEN_1}}
             return (FakeGlanceImageService(), 1)
         self.stubs.Set(glance, 'get_remote_image_service',
                        fake_get_remote_image_service)
@@ -153,6 +158,7 @@ class HyperVAPIBaseTestCase(test.NoDBTestCase):
         self._mox.StubOutWithMock(vmutils.VMUtils, 'create_vm')
         self._mox.StubOutWithMock(vmutils.VMUtils, 'destroy_vm')
         self._mox.StubOutWithMock(vmutils.VMUtils, 'attach_ide_drive')
+        self._mox.StubOutWithMock(vmutils.VMUtils, 'attach_drive')
         self._mox.StubOutWithMock(vmutils.VMUtils, 'create_scsi_controller')
         self._mox.StubOutWithMock(vmutils.VMUtils, 'create_nic')
         self._mox.StubOutWithMock(vmutils.VMUtils, 'set_vm_state')
@@ -163,7 +169,8 @@ class HyperVAPIBaseTestCase(test.NoDBTestCase):
         self._mox.StubOutWithMock(vmutils.VMUtils, 'set_nic_connection')
         self._mox.StubOutWithMock(vmutils.VMUtils, 'get_vm_scsi_controller')
         self._mox.StubOutWithMock(vmutils.VMUtils, 'get_vm_ide_controller')
-        self._mox.StubOutWithMock(vmutils.VMUtils, 'get_attached_disks_count')
+        self._mox.StubOutWithMock(vmutils.VMUtils, '_get_free_controller_slot')
+        self._mox.StubOutWithMock(vmutils.VMUtils, 'get_attached_disks')
         self._mox.StubOutWithMock(vmutils.VMUtils,
                                   'attach_volume_to_controller')
         self._mox.StubOutWithMock(vmutils.VMUtils,
@@ -195,6 +202,10 @@ class HyperVAPIBaseTestCase(test.NoDBTestCase):
         self._mox.StubOutWithMock(hostutils.HostUtils, 'get_volume_info')
         self._mox.StubOutWithMock(hostutils.HostUtils, 'get_windows_version')
         self._mox.StubOutWithMock(hostutils.HostUtils, 'get_local_ips')
+
+        self._mox.StubOutWithMock(imagecache.ImageCache, 'get_image_details')
+        self._mox.StubOutWithMock(imagecache.ImageCache,
+                                  'get_image_vm_generation')
 
         self._mox.StubOutWithMock(networkutils.NetworkUtils,
                                   'get_external_vswitch')
@@ -298,6 +309,9 @@ class HyperVAPITestCase(HyperVAPIBaseTestCase):
                          windows_version.replace('.', ''))
         self.assertEqual(dic['supported_instances'],
                 '[["i686", "hyperv", "hvm"], ["x86_64", "hyperv", "hvm"]]')
+        self.assertEqual(dic['hw_machine_type'],
+                         [constants.IMAGE_PROP_VM_GEN_1,
+                          constants.IMAGE_PROP_VM_GEN_2])
 
     def test_get_host_stats(self):
         tot_mem_kb = 2000000L
@@ -907,7 +921,8 @@ class HyperVAPITestCase(HyperVAPIBaseTestCase):
                                      ephemeral_storage=False):
         vmutils.VMUtils.create_vm(mox.Func(self._check_vm_name), mox.IsA(int),
                                   mox.IsA(int), mox.IsA(bool),
-                                  CONF.hyperv.dynamic_memory_ratio)
+                                  CONF.hyperv.dynamic_memory_ratio,
+                                  mox.IsA(int))
 
         if not boot_from_volume:
             m = vmutils.VMUtils.attach_ide_drive(mox.Func(self._check_vm_name),
@@ -1040,6 +1055,13 @@ class HyperVAPITestCase(HyperVAPIBaseTestCase):
             vhdutils.VHDUtils.create_dynamic_vhd(mox.IsA(str), mox.IsA(int),
                                                  mox.IsA(str))
 
+        mox_or = mox.Or(mox.IsA(str), mox.IsA(None))
+        m = imagecache.ImageCache.get_image_vm_generation(mox_or,
+                                                          mox.IsA(object),
+                                                          mox.IsA(object),
+                                                          mox.IsA(dict))
+        m.AndReturn(constants.VM_GEN_1)
+
         self._setup_create_instance_mocks(setup_vif_mocks_func,
                                           boot_from_volume,
                                           block_device_info,
@@ -1135,7 +1157,7 @@ class HyperVAPITestCase(HyperVAPIBaseTestCase):
             m.AndReturn(fake_controller_path)
 
             fake_free_slot = 1
-            m = vmutils.VMUtils.get_attached_disks_count(fake_controller_path)
+            m = vmutils.VMUtils._get_free_controller_slot(fake_controller_path)
             m.AndReturn(fake_free_slot)
 
         m = vmutils.VMUtils.attach_volume_to_controller(instance_name,
@@ -1535,6 +1557,13 @@ class HyperVAPITestCase(HyperVAPIBaseTestCase):
         else:
             m.AndReturn(None)
 
+        mox_or = mox.Or(mox.IsA(dict), mox.IsA(None))
+        m = imagecache.ImageCache.get_image_vm_generation(mox.IsA(str),
+                                                          mox.IsA(object),
+                                                          mox.IsA(object),
+                                                          mox_or)
+        m.AndReturn(constants.VM_GEN_1)
+
         self._set_vm_name(instance['name'])
         self._setup_create_instance_mocks(None, False,
                                           ephemeral_storage=ephemeral_storage)
@@ -1597,6 +1626,11 @@ class HyperVAPITestCase(HyperVAPIBaseTestCase):
             m.AndReturn(self._test_instance_dir)
         else:
             m.AndReturn(None)
+
+        m = imagecache.ImageCache.get_image_vm_generation(mox.IsA(str),
+                                                          mox.IsA(object),
+                                                          mox.IsA(object))
+        m.AndReturn(constants.VM_GEN_1)
 
         self._set_vm_name(instance['name'])
         self._setup_create_instance_mocks(None, False,

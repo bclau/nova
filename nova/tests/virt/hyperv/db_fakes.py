@@ -54,6 +54,8 @@ def get_fake_image_data(project_id, user_id):
             'ramdisk_id': "1",
             'mac_address': "de:ad:be:ef:be:ef",
             'flavor': 'm1.tiny',
+            'properties': {
+                'vm_generation': '2'}
             }
 
 

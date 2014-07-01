@@ -25,6 +25,7 @@ from nova.openstack.common.gettextutils import _
 from nova.openstack.common import log as logging
 from nova.openstack.common import units
 from nova import utils
+from nova.virt.hyperv import constants
 from nova.virt.hyperv import utilsfactory
 from nova.virt.hyperv import vmutils
 from nova.virt import images
@@ -34,11 +35,15 @@ LOG = logging.getLogger(__name__)
 CONF = cfg.CONF
 CONF.import_opt('use_cow_images', 'nova.virt.driver')
 
+IMAGE_PROP_VM_GEN = 'hw_machine_type'
+
 
 class ImageCache(object):
+
     def __init__(self):
         self._pathutils = utilsfactory.get_pathutils()
         self._vhdutils = utilsfactory.get_vhdutils()
+        self._hostutils = utilsfactory.get_hostutils()
 
     def _get_root_vhd_size_gb(self, instance):
         try:
@@ -138,3 +143,33 @@ class ImageCache(object):
                 return resized_vhd_path
 
         return vhd_path
+
+    def get_image_details(self, context, instance):
+        image_id = instance['image_ref']
+        return images.get_info(context, image_id)
+
+    def get_image_vm_generation(self, root_vhd_path, context, instance,
+                                image_meta=None):
+        if not image_meta:
+            image_meta = self.get_image_details(context, instance)
+
+        image_props = image_meta['properties']
+        image_prop_vm = image_props.get(IMAGE_PROP_VM_GEN,
+                                        constants.IMAGE_PROP_VM_GEN_1)
+        if image_prop_vm == constants.IMAGE_PROP_VM_GEN_2:
+            vm_gen = constants.VM_GEN_2
+        else:
+            vm_gen = constants.VM_GEN_1
+
+        if vm_gen == constants.VM_GEN_2:
+            if not self._hostutils.check_min_windows_version(6, 3):
+                LOG.warning('Requested VM Generation 2, which is not supported'
+                            ' on this OS. Creating VM Generation 1.')
+                vm_gen = constants.VM_GEN_1
+            elif root_vhd_path and self._vhdutils.get_vhd_format(
+                    root_vhd_path) == constants.DISK_FORMAT_VHD:
+                LOG.warning('Requested VM Generation 2, but provided VHD, '
+                            'which is not supported.')
+                vm_gen = constants.VM_GEN_1
+
+        return vm_gen

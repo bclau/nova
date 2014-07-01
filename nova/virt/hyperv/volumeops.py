@@ -124,14 +124,18 @@ class VolumeOps(object):
             #Getting the mounted disk
             mounted_disk_path = self._get_mounted_disk_from_lun(target_iqn,
                                                                 target_lun)
-
+            ctrller_path = None
             if ebs_root:
                 #Find the IDE controller for the vm.
+                #If the vm has no IDE controller (generation 2 VM)
+                #ctrller_path will be None, and the disk will be attached
+                # to the SCSI controller.
                 ctrller_path = self._vmutils.get_vm_ide_controller(
                     instance_name, 0)
                 #Attaching to the first slot
                 slot = 0
-            else:
+
+            if not ctrller_path:
                 #Find the SCSI controller for the vm
                 ctrller_path = self._vmutils.get_vm_scsi_controller(
                     instance_name)
@@ -150,7 +154,7 @@ class VolumeOps(object):
 
     def _get_free_controller_slot(self, scsi_controller_path):
         #Slots starts from 0, so the length of the disks gives us the free slot
-        return self._vmutils.get_attached_disks_count(scsi_controller_path)
+        return self._vmutils._get_free_controller_slot(scsi_controller_path)
 
     def detach_volumes(self, block_device_info, instance_name):
         mapping = driver.block_device_info_get_mapping(block_device_info)

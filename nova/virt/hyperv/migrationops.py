@@ -156,9 +156,11 @@ class MigrationOps(object):
             root_vhd_path = self._pathutils.lookup_root_vhd_path(instance_name)
 
         eph_vhd_path = self._pathutils.lookup_ephemeral_vhd_path(instance_name)
+        vm_gen = self._imagecache.get_image_vm_generation(
+            root_vhd_path, context, instance)
 
         self._vmops.create_instance(instance, network_info, block_device_info,
-                                    root_vhd_path, eph_vhd_path)
+                                    root_vhd_path, eph_vhd_path, vm_gen)
 
         if power_on:
             self._vmops.power_on(instance)
@@ -266,7 +268,10 @@ class MigrationOps(object):
                 eph_vhd_info = self._vhdutils.get_vhd_info(eph_vhd_path)
                 self._check_resize_vhd(eph_vhd_path, eph_vhd_info, new_size)
 
+        vm_gen = self._imagecache.get_image_vm_generation(
+            root_vhd_path, context, instance, image_meta)
+
         self._vmops.create_instance(instance, network_info, block_device_info,
-                                    root_vhd_path, eph_vhd_path)
+                                    root_vhd_path, eph_vhd_path, vm_gen)
         if power_on:
             self._vmops.power_on(instance)

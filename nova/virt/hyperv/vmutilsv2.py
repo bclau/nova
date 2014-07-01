@@ -46,6 +46,7 @@ class VMUtilsV2(vmutils.VMUtils):
     _SCSI_CTRL_RES_SUB_TYPE = 'Microsoft:Hyper-V:Synthetic SCSI Controller'
 
     _VIRTUAL_SYSTEM_TYPE_REALIZED = 'Microsoft:Hyper-V:System:Realized'
+    _VIRTUAL_SYSTEM_SUBTYPE_GEN2 = 'Microsoft:Hyper-V:SubType:2'
 
     _SNAPSHOT_FULL = 2
 
@@ -68,9 +69,11 @@ class VMUtilsV2(vmutils.VMUtils):
     def _init_hyperv_wmi_conn(self, host):
         self._conn = wmi.WMI(moniker='//%s/root/virtualization/v2' % host)
 
-    def _create_vm_obj(self, vs_man_svc, vm_name):
+    def _create_vm_obj(self, vs_man_svc, vm_name, vm_gen=constants.VM_GEN_2):
         vs_data = self._conn.Msvm_VirtualSystemSettingData.new()
         vs_data.ElementName = vm_name
+        if vm_gen == 2:
+            vs_data.VirtualSystemSubType = self._VIRTUAL_SYSTEM_SUBTYPE_GEN2
 
         (job_path,
          vm_path,
@@ -89,13 +92,28 @@ class VMUtilsV2(vmutils.VMUtils):
         return [s for s in vmsettings if
                 s.VirtualSystemType == self._VIRTUAL_SYSTEM_TYPE_REALIZED][0]
 
-    def attach_ide_drive(self, vm_name, path, ctrller_addr, drive_addr,
-                         drive_type=constants.IDE_DISK):
-        """Create an IDE drive and attach it to the vm."""
+    def _get_attached_disks_query_string(self, scsi_controller_path):
+        # DVD Drives can be attached to SCSI as well, if the VM Generation is 2
+        return ("SELECT * FROM Msvm_ResourceAllocationSettingData WHERE ("
+                "ResourceSubType='%(res_sub_type)s' OR "
+                "ResourceSubType='%(res_sub_type_virt)s' OR "
+                "ResourceSubType='%(res_sub_type_dvd)s') AND "
+                "Parent = '%(parent)s'" % {
+                    'res_sub_type': self._PHYS_DISK_RES_SUB_TYPE,
+                    'res_sub_type_virt': self._DISK_RES_SUB_TYPE,
+                    'res_sub_type_dvd': self._DVD_RES_SUB_TYPE,
+                    'parent': scsi_controller_path.replace("'", "''")})
+
+    def attach_scsi_drive(self, vm_name, path, drive_type=constants.IDE_DISK):
+        ctrller_path = self.get_vm_scsi_controller(vm_name)
+        drive_addr = self._get_free_controller_slot(ctrller_path)
+        self.attach_drive(vm_name, path, ctrller_path, drive_addr, drive_type)
+
+    def attach_drive(self, vm_name, path, ctrller_path, drive_addr,
+                     drive_type=constants.IDE_DISK):
+        """Creates a drive and attaches it to the vm."""
 
         vm = self._lookup_vm_check(vm_name)
-
-        ctrller_path = self._get_vm_ide_controller(vm, ctrller_addr)
 
         if drive_type == constants.IDE_DISK:
             res_sub_type = self._DISK_RES_SUB_TYPE

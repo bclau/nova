@@ -16,6 +16,7 @@ import mock
 
 from nova import test
 
+from nova.virt.hyperv import constants
 from nova.virt.hyperv import vmutilsv2
 
 
@@ -39,6 +40,7 @@ class VMUtilsV2TestCase(test.NoDBTestCase):
     _FAKE_DYNAMIC_MEMORY_RATIO = 1.0
     _FAKE_VHD_PATH = "fake_vhd_path"
     _FAKE_VOLUME_DRIVE_PATH = "fake_volume_drive_path"
+    _FAKE_PATH = "fake_path"
 
     def setUp(self):
         self._vmutils = vmutilsv2.VMUtilsV2()
@@ -80,6 +82,26 @@ class VMUtilsV2TestCase(test.NoDBTestCase):
         self._vmutils._set_vm_vcpus.assert_called_with(mock_vm, mock_s,
                                                        self._FAKE_VCPUS_NUM,
                                                        False)
+
+    @mock.patch("nova.virt.hyperv.vmutilsv2.VMUtilsV2.attach_drive")
+    @mock.patch("nova.virt.hyperv.vmutils.VMUtils."
+                "_get_free_controller_slot")
+    @mock.patch("nova.virt.hyperv.vmutilsv2.VMUtilsV2.get_vm_scsi_controller")
+    def test_attach_scsi_drive(self, mock_get_vm_scsi_controller,
+                               mock_get_free_controller_slot,
+                               mock_attach_drive):
+        mock_get_vm_scsi_controller.return_value = self._FAKE_CTRL_PATH
+        mock_get_free_controller_slot.return_value = self._FAKE_DRIVE_ADDR
+
+        self._vmutils.attach_scsi_drive(self._FAKE_VM_NAME, self._FAKE_PATH,
+                                        constants.IDE_DISK)
+
+        mock_get_vm_scsi_controller.assert_called_once_with(self._FAKE_VM_NAME)
+        mock_get_free_controller_slot.assert_called_once_with(
+            self._FAKE_CTRL_PATH)
+        mock_attach_drive.assert_called_once_with(
+            self._FAKE_VM_NAME, self._FAKE_PATH, self._FAKE_CTRL_PATH,
+            self._FAKE_DRIVE_ADDR, constants.IDE_DISK)
 
     def test_attach_ide_drive(self):
         self._lookup_vm()

@@ -89,6 +89,9 @@ def check_admin_permissions(function):
 
 
 class VMOps(object):
+
+    _VM_GENERATION = 'vm_generation'
+
     _vif_driver_class_map = {
         'nova.network.neutronv2.api.API':
         'nova.virt.hyperv.vif.HyperVNeutronVIFDriver',
@@ -100,6 +103,7 @@ class VMOps(object):
         self._vmutils = utilsfactory.get_vmutils()
         self._vhdutils = utilsfactory.get_vhdutils()
         self._pathutils = utilsfactory.get_pathutils()
+        self._hostutils = utilsfactory.get_hostutils()
         self._volumeops = volumeops.VolumeOps()
         self._imagecache = imagecache.ImageCache()
         self._vif_driver = None
@@ -218,14 +222,16 @@ class VMOps(object):
             root_vhd_path = self._create_root_vhd(context, instance)
 
         eph_vhd_path = self.create_ephemeral_vhd(instance)
+        vm_gen = self._imagecache.get_image_vm_generation(
+            root_vhd_path, context, instance, image_meta)
 
         try:
             self.create_instance(instance, network_info, block_device_info,
-                                 root_vhd_path, eph_vhd_path)
+                                 root_vhd_path, eph_vhd_path, vm_gen)
 
             if configdrive.required_by(instance):
                 self._create_config_drive(instance, injected_files,
-                                          admin_password)
+                                          admin_password, vm_gen)
 
             self.power_on(instance)
         except Exception:
@@ -233,32 +239,26 @@ class VMOps(object):
                 self.destroy(instance)
 
     def create_instance(self, instance, network_info, block_device_info,
-                        root_vhd_path, eph_vhd_path):
+                        root_vhd_path, eph_vhd_path,
+                        vm_gen=constants.VM_GEN_1):
         instance_name = instance['name']
 
         self._vmutils.create_vm(instance_name,
                                 instance['memory_mb'],
                                 instance['vcpus'],
                                 CONF.hyperv.limit_cpu_features,
-                                CONF.hyperv.dynamic_memory_ratio)
-
-        ctrl_disk_addr = 0
-        if root_vhd_path:
-            self._vmutils.attach_ide_drive(instance_name,
-                                           root_vhd_path,
-                                           0,
-                                           ctrl_disk_addr,
-                                           constants.IDE_DISK)
-            ctrl_disk_addr += 1
-
-        if eph_vhd_path:
-            self._vmutils.attach_ide_drive(instance_name,
-                                           eph_vhd_path,
-                                           0,
-                                           ctrl_disk_addr,
-                                           constants.IDE_DISK)
+                                CONF.hyperv.dynamic_memory_ratio,
+                                vm_gen)
 
         self._vmutils.create_scsi_controller(instance_name)
+
+        ctrl_disk_addr = 0
+        if self._attach_drive(instance_name, root_vhd_path, 0, ctrl_disk_addr,
+                              vm_gen):
+            ctrl_disk_addr += 1
+
+        self._attach_drive(instance_name, eph_vhd_path, 0, ctrl_disk_addr,
+                           vm_gen)
 
         self._volumeops.attach_volumes(block_device_info,
                                        instance_name,
@@ -274,7 +274,21 @@ class VMOps(object):
         if CONF.hyperv.enable_instance_metrics_collection:
             self._vmutils.enable_vm_metrics_collection(instance_name)
 
-    def _create_config_drive(self, instance, injected_files, admin_password):
+    def _attach_drive(self, instance_name, path, drive_addr,
+                      ctrl_disk_addr, vm_gen, drive_type=constants.IDE_DISK):
+        if path:
+            if vm_gen == constants.VM_GEN_2:
+                self._vmutils.attach_scsi_drive(instance_name, path,
+                                                drive_type)
+            else:
+                self._vmutils.attach_ide_drive(instance_name, path,
+                                               drive_addr, ctrl_disk_addr,
+                                               drive_type)
+            return True
+        return False
+
+    def _create_config_drive(self, instance, injected_files, admin_password,
+                             vm_gen=constants.VM_GEN_1):
         if CONF.config_drive_format != 'iso9660':
             raise vmutils.UnsupportedConfigDriveFormatException(
                 _('Invalid config_drive_format "%s"') %
@@ -322,8 +336,8 @@ class VMOps(object):
             drive_type = constants.IDE_DVD
             configdrive_path = configdrive_path_iso
 
-        self._vmutils.attach_ide_drive(instance['name'], configdrive_path,
-                                       1, 0, drive_type)
+        self._attach_drive(instance['name'], configdrive_path, 1, 0,
+                           vm_gen, drive_type)
 
     def _disconnect_volumes(self, volume_drives):
         for volume_drive in volume_drives:
