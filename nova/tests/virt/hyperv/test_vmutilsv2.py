@@ -15,6 +15,7 @@
 import mock
 
 from nova.tests.virt.hyperv import test_vmutils
+from nova.virt.hyperv import constants
 from nova.virt.hyperv import vmutilsv2
 
 
@@ -28,6 +29,7 @@ class VMUtilsV2TestCase(test_vmutils.VMUtilsTestCase):
     _ADD_RESOURCE = 'AddResourceSettings'
     _REMOVE_RESOURCE = 'RemoveResourceSettings'
     _SETTING_TYPE = 'VirtualSystemType'
+    _VM_GEN = constants.VM_GEN_2
 
     _VIRTUAL_SYSTEM_TYPE_REALIZED = 'Microsoft:Hyper-V:System:Realized'
 
@@ -35,6 +37,13 @@ class VMUtilsV2TestCase(test_vmutils.VMUtilsTestCase):
         super(VMUtilsV2TestCase, self).setUp()
         self._vmutils = vmutilsv2.VMUtilsV2()
         self._vmutils._conn = mock.MagicMock()
+
+    def test_create_vm(self):
+        super(VMUtilsV2TestCase, self).test_create_vm()
+        mock_vssd = self._vmutils._conn.Msvm_VirtualSystemSettingData.new()
+        self.assertEqual(self._vmutils._VIRTUAL_SYSTEM_SUBTYPE_GEN2,
+                         mock_vssd.VirtualSystemSubType)
+        self.assertFalse(mock_vssd.SecureBootEnabled)
 
     def test_modify_virt_resource(self):
         mock_svc = self._vmutils._conn.Msvm_VirtualSystemManagementService()[0]
@@ -152,6 +161,7 @@ class VMUtilsV2TestCase(test_vmutils.VMUtilsTestCase):
 
         response = self._vmutils._create_vm_obj(vs_man_svc=mock_vs_man_svc,
                                                 vm_name='fake vm',
+                                                vm_gen='fake vm gen',
                                                 notes='fake notes')
 
         if not vm_path:

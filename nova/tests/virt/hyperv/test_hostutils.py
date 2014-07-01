@@ -15,6 +15,7 @@
 import mock
 
 from nova import test
+from nova.virt.hyperv import constants
 from nova.virt.hyperv import hostutils
 
 
@@ -32,3 +33,19 @@ class HostUtilsTestCase(test.NoDBTestCase):
         mock_ctypes.windll.kernel32.GetTickCount64.return_value = tick_count64
         response = self._hostutils.get_host_tick_count64()
         self.assertEqual(tick_count64, response)
+
+    def _test_get_supported_machine_types(self, is_6_3, expected):
+        with mock.patch.object(self._hostutils,
+                               'check_min_windows_version') as mocked:
+            mocked.return_value = is_6_3
+            result = self._hostutils.get_supported_vm_types()
+            self.assertEqual(expected, result)
+
+    def test_get_supported_machine_types_older(self):
+        self._test_get_supported_machine_types(False,
+                                               [constants.IMAGE_PROP_VM_GEN_1])
+
+    def test_get_supported_machine_types_63(self):
+        expected = [constants.IMAGE_PROP_VM_GEN_1,
+                    constants.IMAGE_PROP_VM_GEN_2]
+        self._test_get_supported_machine_types(True, expected)

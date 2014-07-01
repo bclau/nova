@@ -125,6 +125,7 @@ class HostOps(object):
                'memory_mb_used': used_mem_mb,
                'local_gb': total_hdd_gb,
                'local_gb_used': used_hdd_gb,
+               'hw_machine_type': self._hostutils.get_supported_vm_types(),
                'hypervisor_type': "hyperv",
                'hypervisor_version': self._get_hypervisor_version(),
                'hypervisor_hostname': platform.node(),

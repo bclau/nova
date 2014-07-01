@@ -28,6 +28,7 @@ class VMOpsTestCase(test.NoDBTestCase):
     """Unit tests for the Hyper-V VMOps class."""
 
     _FAKE_TIMEOUT = 2
+    _FAKE_CONFIGDRIVE_PATH = 'C:/fake_instance_dir/configdrive.vhd'
 
     def __init__(self, test_case_name):
         super(VMOpsTestCase, self).__init__(test_case_name)
@@ -45,11 +46,32 @@ class VMOpsTestCase(test.NoDBTestCase):
 
         self._vmops = vmops.VMOps()
 
-    def test_attach_config_drive(self):
+    def test_attach_config_drive_exception(self):
         instance = fake_instance.fake_instance_obj(self.context)
         self.assertRaises(exception.InvalidDiskFormat,
                           self._vmops.attach_config_drive,
-                          instance, 'C:/fake_instance_dir/configdrive.xxx')
+                          instance, 'C:/fake_instance_dir/configdrive.xxx',
+                          constants.VM_GEN_1)
+
+    @mock.patch.object(vmops.VMOps, '_attach_drive')
+    def test_attach_config_drive(self, mock_attach_drive):
+        instance = fake_instance.fake_instance_obj(self.context)
+        self._vmops.attach_config_drive(instance,
+                                        self._FAKE_CONFIGDRIVE_PATH,
+                                        constants.VM_GEN_1)
+        mock_attach_drive.assert_called_once_with(
+            instance.name, self._FAKE_CONFIGDRIVE_PATH,
+            1, 0, constants.IDE, constants.DISK)
+
+    @mock.patch.object(vmops.VMOps, '_attach_drive')
+    def test_attach_config_drive_gen2(self, mock_attach_drive):
+        instance = fake_instance.fake_instance_obj(self.context)
+        self._vmops.attach_config_drive(instance,
+                                        self._FAKE_CONFIGDRIVE_PATH,
+                                        constants.VM_GEN_2)
+        mock_attach_drive.assert_called_once_with(
+            instance.name, self._FAKE_CONFIGDRIVE_PATH,
+            1, 0, constants.SCSI, constants.DISK)
 
     def test_reboot_hard(self):
         self._test_reboot(vmops.REBOOT_TYPE_HARD,
@@ -228,3 +250,59 @@ class VMOpsTestCase(test.NoDBTestCase):
             mock_list_notes.assert_called_once_with()
 
         self.assertEqual(response, [fake_uuid])
+
+    @mock.patch.object(vmutils.VMUtils, 'attach_scsi_drive')
+    def test_attach_drive_vm_to_scsi(self, mock_attach_scsi_drive):
+        self._vmops._attach_drive(
+            mock.sentinel.FAKE_VM_NAME, mock.sentinel.FAKE_PATH,
+            mock.sentinel.FAKE_DRIVE_ADDR, mock.sentinel.FAKE_CTRL_DISK_ADDR,
+            constants.SCSI)
+
+        mock_attach_scsi_drive.assert_called_once_with(
+            mock.sentinel.FAKE_VM_NAME, mock.sentinel.FAKE_PATH,
+            constants.DISK)
+
+    @mock.patch.object(vmutils.VMUtils, 'attach_ide_drive')
+    def test_attach_drive_vm_to_ide(self, mock_attach_ide_drive):
+        self._vmops._attach_drive(
+            mock.sentinel.FAKE_VM_NAME, mock.sentinel.FAKE_PATH,
+            mock.sentinel.FAKE_DRIVE_ADDR, mock.sentinel.FAKE_CTRL_DISK_ADDR,
+            constants.IDE)
+
+        mock_attach_ide_drive.assert_called_once_with(
+            mock.sentinel.FAKE_VM_NAME, mock.sentinel.FAKE_PATH,
+            mock.sentinel.FAKE_DRIVE_ADDR, mock.sentinel.FAKE_CTRL_DISK_ADDR,
+            constants.DISK)
+
+    def _check_get_image_vm_generation(self, vm_gen, expected_vm_gen):
+        image_meta = {"properties": {constants.IMAGE_PROP_VM_GEN: vm_gen}}
+
+        self._vmops._hostutils.get_default_vm_generation.return_value = (
+            mock.sentinel.FAKE_VM_GEN)
+        self._vmops._hostutils.get_supported_vm_types.return_value = [
+            constants.IMAGE_PROP_VM_GEN_1, constants.IMAGE_PROP_VM_GEN_2]
+
+        response = self._vmops.get_image_vm_generation(mock.sentinel.FAKE_PATH,
+                                                       image_meta)
+
+        self.assertEqual(response, expected_vm_gen)
+
+    def test_get_image_vm_generation_1(self):
+        self._check_get_image_vm_generation(constants.IMAGE_PROP_VM_GEN_1,
+                                            constants.VM_GEN_1)
+
+    def test_get_image_vm_generation_2(self):
+        self._check_get_image_vm_generation(mock.sentinel.FAKE_IMAGE_PROP,
+                                            mock.sentinel.FAKE_VM_GEN)
+
+    @mock.patch("nova.virt.hyperv.vhdutils.VHDUtils.get_vhd_format")
+    def test_get_image_vm_generation_2_vhd(self, mock_get_vhd_format):
+        mock_get_vhd_format.return_value = constants.DISK_FORMAT_VHD
+        self._check_get_image_vm_generation(constants.IMAGE_PROP_VM_GEN_2,
+                                            constants.VM_GEN_1)
+
+    @mock.patch("nova.virt.hyperv.vhdutils.VHDUtils.get_vhd_format")
+    def test_get_image_vm_generation_2_vhdx(self, mock_get_vhd_format):
+        mock_get_vhd_format.return_value = constants.DISK_FORMAT_VHDX
+        self._check_get_image_vm_generation(constants.IMAGE_PROP_VM_GEN_2,
+                                            constants.VM_GEN_2)

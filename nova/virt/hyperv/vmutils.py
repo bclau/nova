@@ -239,12 +239,12 @@ class VMUtils(object):
             raise HyperVAuthorizationException(msg)
 
     def create_vm(self, vm_name, memory_mb, vcpus_num, limit_cpu_features,
-                  dynamic_memory_ratio, notes=None):
+                  dynamic_memory_ratio, vm_gen, notes=None):
         """Creates a VM."""
         vs_man_svc = self._conn.Msvm_VirtualSystemManagementService()[0]
 
         LOG.debug('Creating VM %s', vm_name)
-        vm = self._create_vm_obj(vs_man_svc, vm_name, notes)
+        vm = self._create_vm_obj(vs_man_svc, vm_name, vm_gen, notes)
 
         vmsetting = self._get_vm_setting_data(vm)
 
@@ -254,7 +254,7 @@ class VMUtils(object):
         LOG.debug('Set vCPUs for vm %s', vm_name)
         self._set_vm_vcpus(vm, vmsetting, vcpus_num, limit_cpu_features)
 
-    def _create_vm_obj(self, vs_man_svc, vm_name, notes):
+    def _create_vm_obj(self, vs_man_svc, vm_name, vm_gen, notes):
         vs_gs_data = self._conn.Msvm_VirtualSystemGlobalSettingData.new()
         vs_gs_data.ElementName = vm_name
         # Don't start automatically on host boot
@@ -283,6 +283,9 @@ class VMUtils(object):
 
     def get_vm_scsi_controller(self, vm_name):
         vm = self._lookup_vm_check(vm_name)
+        return self._get_vm_scsi_controller(vm)
+
+    def _get_vm_scsi_controller(self, vm):
         vmsettings = vm.associators(
             wmi_result_class=self._VIRTUAL_SYSTEM_SETTING_DATA_CLASS)
         rasds = vmsettings[0].associators(
@@ -296,26 +299,38 @@ class VMUtils(object):
             wmi_result_class=self._VIRTUAL_SYSTEM_SETTING_DATA_CLASS)
         rasds = vmsettings[0].associators(
             wmi_result_class=self._RESOURCE_ALLOC_SETTING_DATA_CLASS)
-        return [r for r in rasds
-                if r.ResourceSubType == self._IDE_CTRL_RES_SUB_TYPE
-                and r.Address == str(ctrller_addr)][0].path_()
+        ide_ctrls = [r for r in rasds
+                     if r.ResourceSubType == self._IDE_CTRL_RES_SUB_TYPE
+                     and r.Address == str(ctrller_addr)]
+
+        return ide_ctrls[0].path_() if ide_ctrls else None
 
     def get_vm_ide_controller(self, vm_name, ctrller_addr):
         vm = self._lookup_vm_check(vm_name)
         return self._get_vm_ide_controller(vm, ctrller_addr)
 
+    def get_free_controller_slot(self, scsi_controller_path):
+        attached_disks = self.get_attached_disks(scsi_controller_path)
+        used_slots = [int(disk.AddressOnParent) for disk in attached_disks]
+
+        for slot in xrange(constants.SCSI_CONTROLLER_SLOTS_NUMBER):
+            if slot not in used_slots:
+                return slot
+        raise HyperVException("Exceeded the maximum number of slots")
+
     def get_attached_disks(self, scsi_controller_path):
-        volumes = self._conn.query("SELECT * FROM %(class_name)s "
-                                   "WHERE ResourceSubType = "
-                                   "'%(res_sub_type)s' AND "
-                                   "Parent = '%(parent)s'" %
-                                   {"class_name":
-                                    self._RESOURCE_ALLOC_SETTING_DATA_CLASS,
-                                    'res_sub_type':
-                                    self._PHYS_DISK_RES_SUB_TYPE,
-                                    'parent':
-                                    scsi_controller_path.replace("'", "''")})
+        volumes = self._conn.query(
+            self._get_attached_disks_query_string(scsi_controller_path))
         return volumes
+
+    def _get_attached_disks_query_string(self, scsi_controller_path):
+        return ("SELECT * FROM Msvm_ResourceAllocationSettingData WHERE ("
+                "ResourceSubType='%(res_sub_type)s' OR "
+                "ResourceSubType='%(res_sub_type_virt)s') AND "
+                "Parent = '%(parent)s'" % {
+                    'res_sub_type': self._PHYS_DISK_RES_SUB_TYPE,
+                    'res_sub_type_virt': self._DISK_DRIVE_RES_SUB_TYPE,
+                    'parent': scsi_controller_path.replace("'", "''")})
 
     def _get_new_setting_data(self, class_name):
         return self._conn.query("SELECT * FROM %s WHERE InstanceID "
@@ -331,6 +346,12 @@ class VMUtils(object):
                                 "InstanceID LIKE '%%\\Default'" %
                                 {"class_name": class_name,
                                  "res_sub_type": resource_sub_type})[0]
+
+    def attach_scsi_drive(self, vm_name, path, drive_type=constants.DISK):
+        vm = self._lookup_vm_check(vm_name)
+        ctrller_path = self._get_vm_scsi_controller(vm)
+        drive_addr = self.get_free_controller_slot(ctrller_path)
+        self._attach_drive(vm, path, ctrller_path, drive_addr, drive_type)
 
     def attach_ide_drive(self, vm_name, path, ctrller_addr, drive_addr,
                          drive_type=constants.DISK):
