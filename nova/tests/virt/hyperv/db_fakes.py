@@ -23,6 +23,8 @@ from nova.compute import vm_states
 from nova import db
 from nova import utils
 
+from nova.virt.hyperv import constants
+
 
 def get_fake_instance_data(name, project_id, user_id):
     return {'name': name,
@@ -54,6 +56,8 @@ def get_fake_image_data(project_id, user_id):
             'ramdisk_id': "1",
             'mac_address': "de:ad:be:ef:be:ef",
             'flavor': 'm1.tiny',
+            'properties': {
+                constants.IMAGE_PROP_VM_GEN: constants.IMAGE_PROP_VM_GEN_1}
             }
 
 

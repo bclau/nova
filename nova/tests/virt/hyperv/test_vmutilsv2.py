@@ -16,6 +16,7 @@ import mock
 
 from nova import test
 
+from nova.virt.hyperv import constants
 from nova.virt.hyperv import vmutilsv2
 
 
@@ -70,7 +71,8 @@ class VMUtilsV2TestCase(test.NoDBTestCase):
 
         self._vmutils.create_vm(self._FAKE_VM_NAME, self._FAKE_MEMORY_MB,
                                 self._FAKE_VCPUS_NUM, False,
-                                self._FAKE_DYNAMIC_MEMORY_RATIO)
+                                self._FAKE_DYNAMIC_MEMORY_RATIO,
+                                constants.VM_GEN_1)
 
         self.assertTrue(mock_svc.DefineSystem.called)
         self._vmutils._set_vm_memory.assert_called_with(
