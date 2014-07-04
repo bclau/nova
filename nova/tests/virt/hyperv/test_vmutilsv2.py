@@ -122,7 +122,7 @@ class VMUtilsV2TestCase(test.NoDBTestCase):
         mock_vm.associators.return_value = mock_vmsettings
         mock_sasds = []
         mock_sasd1 = mock.MagicMock()
-        mock_sasd1.ResourceSubType = self._vmutils._IDE_DISK_RES_SUB_TYPE
+        mock_sasd1.ResourceSubType = self._vmutils._HARD_DISK_RES_SUB_TYPE
         mock_sasd1.HostResource = [self._FAKE_VHD_PATH]
         mock_sasd2 = mock.MagicMock()
         mock_sasd2.ResourceSubType = self._vmutils._PHYS_DISK_RES_SUB_TYPE

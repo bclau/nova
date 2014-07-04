@@ -17,6 +17,7 @@ import mock
 
 from nova import test
 
+from nova.virt.hyperv import constants
 from nova.virt.hyperv import vmutils
 
 
@@ -29,6 +30,11 @@ class VMUtilsTestCase(test.NoDBTestCase):
     _FAKE_VHD_PATH = "fake_vhd_path"
     _FAKE_DVD_PATH = "fake_dvd_path"
     _FAKE_VOLUME_DRIVE_PATH = "fake_volume_drive_path"
+
+    _FAKE_PATH = "fake_path"
+    _FAKE_CTRL_PATH = "fake_ctrl_path"
+    _FAKE_CTRL_ADDR = "fake_ctrl_addr"
+    _FAKE_DRIVE_ADDR = "fake_drive_addr"
 
     def setUp(self):
         self._vmutils = vmutils.VMUtils()
@@ -77,6 +83,23 @@ class VMUtilsTestCase(test.NoDBTestCase):
         else:
             self.assertFalse(mock_s.DynamicMemoryEnabled)
 
+    @mock.patch("nova.virt.hyperv.vmutils.VMUtils._get_vm_ide_controller")
+    def test_attach_ide_drive(self, mock_get_vm_ide_controller):
+        mock_vm = self._lookup_vm()
+        mock_get_vm_ide_controller.return_value = self._FAKE_CTRL_PATH
+
+        with mock.patch.object(self._vmutils,
+                               '_attach_drive') as mock_attach_drive:
+            self._vmutils.attach_ide_drive(
+                self._FAKE_VM_NAME, self._FAKE_PATH, self._FAKE_CTRL_ADDR,
+                self._FAKE_DRIVE_ADDR, constants.DISK)
+
+            mock_get_vm_ide_controller.assert_called_once_with(
+                mock_vm, self._FAKE_CTRL_ADDR)
+            mock_attach_drive.assert_called_once_with(
+                mock_vm, self._FAKE_PATH, self._FAKE_CTRL_PATH,
+                self._FAKE_DRIVE_ADDR, constants.DISK)
+
     @mock.patch('nova.virt.hyperv.vmutils.VMUtils._get_vm_disks')
     def test_get_vm_storage_paths(self, mock_get_vm_disks):
         self._lookup_vm()
@@ -108,7 +131,7 @@ class VMUtilsTestCase(test.NoDBTestCase):
 
     def _create_mock_disks(self):
         mock_rasd1 = mock.MagicMock()
-        mock_rasd1.ResourceSubType = self._vmutils._IDE_DISK_RES_SUB_TYPE
+        mock_rasd1.ResourceSubType = self._vmutils._HARD_DISK_RES_SUB_TYPE
         mock_rasd1.Connection = [self._FAKE_VHD_PATH]
 
         mock_rasd2 = mock.MagicMock()

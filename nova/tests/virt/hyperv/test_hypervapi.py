@@ -88,8 +88,8 @@ class HyperVAPIBaseTestCase(test.NoDBTestCase):
         self._volume_target_portal = 'testtargetportal:3260'
         self._volume_id = '0ef5d708-45ab-4129-8c59-d774d2837eb7'
         self._context = context.RequestContext(self._user_id, self._project_id)
-        self._instance_ide_disks = []
-        self._instance_ide_dvds = []
+        self._instance_disks = []
+        self._instance_dvds = []
         self._instance_volume_disks = []
         self._test_vm_name = None
         self._test_instance_dir = 'C:\\FakeInstancesPath\\instance-0000001'
@@ -421,7 +421,7 @@ class HyperVAPITestCase(HyperVAPIBaseTestCase):
                                              mox.IsA(int),
                                              mox.IsA(int),
                                              mox.IsA(str))
-        m.WithSideEffects(self._add_ide_disk)
+        m.WithSideEffects(self._add_disk)
 
     def _test_spawn_config_drive(self, use_cdrom, format_error=False):
         self.flags(force_config_drive=True)
@@ -429,11 +429,11 @@ class HyperVAPITestCase(HyperVAPIBaseTestCase):
         self.flags(mkisofs_cmd='mkisofs.exe')
 
         if use_cdrom:
-            expected_ide_disks = 1
-            expected_ide_dvds = 1
+            expected_disks = 1
+            expected_dvds = 1
         else:
-            expected_ide_disks = 2
-            expected_ide_dvds = 0
+            expected_disks = 2
+            expected_dvds = 0
 
         if format_error:
             self.assertRaises(vmutils.UnsupportedConfigDriveFormatException,
@@ -442,8 +442,8 @@ class HyperVAPITestCase(HyperVAPIBaseTestCase):
                               config_drive=True,
                               use_cdrom=use_cdrom)
         else:
-            self._test_spawn_instance(expected_ide_disks=expected_ide_disks,
-                                      expected_ide_dvds=expected_ide_dvds,
+            self._test_spawn_instance(expected_disks=expected_disks,
+                                      expected_dvds=expected_dvds,
                                       config_drive=True,
                                       use_cdrom=use_cdrom)
 
@@ -460,11 +460,11 @@ class HyperVAPITestCase(HyperVAPIBaseTestCase):
     def test_spawn_no_config_drive(self):
         self.flags(force_config_drive=False)
 
-        expected_ide_disks = 1
-        expected_ide_dvds = 0
+        expected_disks = 1
+        expected_dvds = 0
 
-        self._test_spawn_instance(expected_ide_disks=expected_ide_disks,
-                                  expected_ide_dvds=expected_ide_dvds)
+        self._test_spawn_instance(expected_disks=expected_disks,
+                                  expected_dvds=expected_dvds)
 
     def _test_spawn_nova_net_vif(self, with_port):
         self.flags(network_api_class='nova.network.api.API')
@@ -520,7 +520,7 @@ class HyperVAPITestCase(HyperVAPIBaseTestCase):
         self._test_spawn_instance(False)
 
     def test_spawn_with_ephemeral_storage(self):
-        self._test_spawn_instance(True, expected_ide_disks=2,
+        self._test_spawn_instance(True, expected_disks=2,
                                   ephemeral_storage=True)
 
     def _check_instance_name(self, vm_name):
@@ -886,12 +886,12 @@ class HyperVAPITestCase(HyperVAPIBaseTestCase):
                          network_info=network_info,
                          block_device_info=block_device_info)
 
-    def _add_ide_disk(self, vm_name, path, ctrller_addr,
-                      drive_addr, drive_type):
-        if drive_type == constants.IDE_DISK:
-            self._instance_ide_disks.append(path)
-        elif drive_type == constants.IDE_DVD:
-            self._instance_ide_dvds.append(path)
+    def _add_disk(self, vm_name, path, ctrller_addr,
+                  drive_addr, drive_type):
+        if drive_type == constants.DISK:
+            self._instance_disks.append(path)
+        elif drive_type == constants.DVD:
+            self._instance_dvds.append(path)
 
     def _add_volume_disk(self, vm_name, controller_path, address,
                          mounted_disk_path):
@@ -915,7 +915,7 @@ class HyperVAPITestCase(HyperVAPIBaseTestCase):
                                                  mox.IsA(int),
                                                  mox.IsA(int),
                                                  mox.IsA(str))
-            m.WithSideEffects(self._add_ide_disk).InAnyOrder()
+            m.WithSideEffects(self._add_disk).InAnyOrder()
 
         if ephemeral_storage:
             m = vmutils.VMUtils.attach_ide_drive(mox.Func(self._check_vm_name),
@@ -923,7 +923,7 @@ class HyperVAPITestCase(HyperVAPIBaseTestCase):
                                                  mox.IsA(int),
                                                  mox.IsA(int),
                                                  mox.IsA(str))
-            m.WithSideEffects(self._add_ide_disk).InAnyOrder()
+            m.WithSideEffects(self._add_disk).InAnyOrder()
 
         func = mox.Func(self._check_vm_name)
         m = vmutils.VMUtils.create_scsi_controller(func)
@@ -1057,8 +1057,8 @@ class HyperVAPITestCase(HyperVAPIBaseTestCase):
                                          constants.HYPERV_VM_STATE_ENABLED)
 
     def _test_spawn_instance(self, cow=True,
-                             expected_ide_disks=1,
-                             expected_ide_dvds=0,
+                             expected_disks=1,
+                             expected_dvds=0,
                              setup_vif_mocks_func=None,
                              with_exception=False,
                              config_drive=False,
@@ -1079,12 +1079,12 @@ class HyperVAPITestCase(HyperVAPIBaseTestCase):
         self._spawn_instance(cow, ephemeral_storage=ephemeral_storage)
         self._mox.VerifyAll()
 
-        self.assertEqual(len(self._instance_ide_disks), expected_ide_disks)
-        self.assertEqual(len(self._instance_ide_dvds), expected_ide_dvds)
+        self.assertEqual(len(self._instance_disks), expected_disks)
+        self.assertEqual(len(self._instance_dvds), expected_dvds)
 
         vhd_path = os.path.join(self._test_instance_dir, 'root.' +
                                 vhd_format.lower())
-        self.assertEqual(vhd_path, self._instance_ide_disks[0])
+        self.assertEqual(vhd_path, self._instance_disks[0])
 
     def _mock_get_mounted_disk_from_lun(self, target_iqn, target_lun,
                                         fake_mounted_disk,

@@ -248,7 +248,7 @@ class VMOps(object):
                                            root_vhd_path,
                                            0,
                                            ctrl_disk_addr,
-                                           constants.IDE_DISK)
+                                           constants.DISK)
             ctrl_disk_addr += 1
 
         if eph_vhd_path:
@@ -256,7 +256,7 @@ class VMOps(object):
                                            eph_vhd_path,
                                            0,
                                            ctrl_disk_addr,
-                                           constants.IDE_DISK)
+                                           constants.DISK)
 
         self._vmutils.create_scsi_controller(instance_name)
 
@@ -305,7 +305,7 @@ class VMOps(object):
                               e, instance=instance)
 
         if not CONF.hyperv.config_drive_cdrom:
-            drive_type = constants.IDE_DISK
+            drive_type = constants.DISK
             configdrive_path = os.path.join(instance_path,
                                             'configdrive.vhd')
             utils.execute(CONF.hyperv.qemu_img_cmd,
@@ -319,7 +319,7 @@ class VMOps(object):
                           attempts=1)
             self._pathutils.remove(configdrive_path_iso)
         else:
-            drive_type = constants.IDE_DVD
+            drive_type = constants.DVD
             configdrive_path = configdrive_path_iso
 
         self._vmutils.attach_ide_drive(instance['name'], configdrive_path,
