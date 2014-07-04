@@ -30,6 +30,7 @@ class VMUtilsTestCase(test.NoDBTestCase):
     _FAKE_JOB_PATH = 'fake_job_path'
     _FAKE_RET_VAL = 0
     _FAKE_RET_VAL_BAD = -1
+    _FAKE_PATH = "fake_path"
     _FAKE_CTRL_PATH = 'fake_ctrl_path'
     _FAKE_CTRL_ADDR = 0
     _FAKE_DRIVE_ADDR = 0
@@ -171,6 +172,23 @@ class VMUtilsTestCase(test.NoDBTestCase):
             self._vmutils.soft_shutdown_vm(self._FAKE_VM_NAME)
             self.assertFalse(mock_check.called)
 
+    @mock.patch("nova.virt.hyperv.vmutils.VMUtils._get_vm_ide_controller")
+    def test_attach_ide_drive(self, mock_get_vm_ide_controller):
+        mock_vm = self._lookup_vm()
+        mock_get_vm_ide_controller.return_value = self._FAKE_CTRL_PATH
+
+        with mock.patch.object(self._vmutils,
+                               '_attach_drive') as mock_attach_drive:
+            self._vmutils.attach_ide_drive(
+                self._FAKE_VM_NAME, self._FAKE_PATH, self._FAKE_CTRL_ADDR,
+                self._FAKE_DRIVE_ADDR, constants.DISK)
+
+            mock_get_vm_ide_controller.assert_called_once_with(
+                mock_vm, self._FAKE_CTRL_ADDR)
+            mock_attach_drive.assert_called_once_with(
+                mock_vm, self._FAKE_PATH, self._FAKE_CTRL_PATH,
+                self._FAKE_DRIVE_ADDR, constants.DISK)
+
     @mock.patch('nova.virt.hyperv.vmutils.VMUtils._get_vm_disks')
     def test_get_vm_storage_paths(self, mock_get_vm_disks):
         self._lookup_vm()
@@ -202,7 +220,7 @@ class VMUtilsTestCase(test.NoDBTestCase):
 
     def _create_mock_disks(self):
         mock_rasd1 = mock.MagicMock()
-        mock_rasd1.ResourceSubType = self._vmutils._IDE_DISK_RES_SUB_TYPE
+        mock_rasd1.ResourceSubType = self._vmutils._HARD_DISK_RES_SUB_TYPE
         mock_rasd1.HostResource = [self._FAKE_VHD_PATH]
         mock_rasd1.Connection = [self._FAKE_VHD_PATH]
         mock_rasd1.Parent = self._FAKE_CTRL_PATH
@@ -519,7 +537,7 @@ class VMUtilsTestCase(test.NoDBTestCase):
         mock_disk = mock.MagicMock()
         mock_disk.HostResource = [self._FAKE_HOST_RESOURCE]
         mock_disk.path.return_value.RelPath = self._FAKE_RES_PATH
-        mock_disk.ResourceSubType = self._vmutils._IDE_DISK_RES_SUB_TYPE
+        mock_disk.ResourceSubType = self._vmutils._HARD_DISK_RES_SUB_TYPE
         self._vmutils._conn.query.return_value = [mock_disk]
 
         return mock_disk
