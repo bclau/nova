@@ -798,6 +798,35 @@ class ComputeManagerUnitTestCase(test.NoDBTestCase):
                 self._test_sync_to_stop(power_state.RUNNING, vs, ps,
                                         stop=False)
 
+    @mock.patch('nova.compute.manager.ComputeManager.'
+                '_sync_instance_power_state')
+    def test_query_driver_power_state_and_sync_pending_task(
+            self, mock_sync_power_state):
+        with mock.patch.object(self.compute.driver,
+                               'get_info') as mock_get_info:
+            db_instance = objects.Instance(uuid='fake-uuid',
+                                           task_state=task_states.POWERING_OFF)
+            self.compute._query_driver_power_state_and_sync(self.context,
+                                                            db_instance)
+            self.assertFalse(mock_get_info.called)
+            self.assertFalse(mock_sync_power_state.called)
+
+    @mock.patch('nova.compute.manager.ComputeManager.'
+                '_sync_instance_power_state')
+    def test_query_driver_power_state_and_sync_not_found_driver(
+            self, mock_sync_power_state):
+        error = exception.InstanceNotFound(instance_id=1)
+        with mock.patch.object(self.compute.driver,
+                               'get_info', side_effect=error) as mock_get_info:
+            db_instance = objects.Instance(uuid='fake-uuid', task_state=None)
+            self.compute._query_driver_power_state_and_sync(self.context,
+                                                            db_instance)
+            mock_get_info.assert_called_once_with(db_instance)
+            mock_sync_power_state.assert_called_once_with(self.context,
+                                                          db_instance,
+                                                          power_state.NOSTATE,
+                                                          use_slave=True)
+
     def test_run_pending_deletes(self):
         self.flags(instance_delete_interval=10)
 
@@ -1917,7 +1946,26 @@ class ComputeManagerBuildInstanceTestCase(test.NoDBTestCase):
     def test_spawn_network_alloc_failure(self):
         # Because network allocation is asynchronous, failures may not present
         # themselves until the virt spawn method is called.
-        exc = exception.NoMoreNetworks()
+        self._test_build_and_run_spawn_exceptions(exception.NoMoreNetworks())
+
+    def test_build_and_run_flavor_disk_too_small_exception(self):
+        self._test_build_and_run_spawn_exceptions(
+            exception.FlavorDiskTooSmall())
+
+    def test_build_and_run_flavor_memory_too_small_exception(self):
+        self._test_build_and_run_spawn_exceptions(
+            exception.FlavorMemoryTooSmall())
+
+    def test_build_and_run_image_not_active_exception(self):
+        self._test_build_and_run_spawn_exceptions(
+            exception.ImageNotActive(image_id=self.image.get('id')))
+
+    def test_build_and_run_image_unacceptable_exception(self):
+        self._test_build_and_run_spawn_exceptions(
+            exception.ImageUnacceptable(image_id=self.image.get('id'),
+                                        reason=""))
+
+    def _test_build_and_run_spawn_exceptions(self, exc):
         with contextlib.nested(
                 mock.patch.object(self.compute.driver, 'spawn',
                     side_effect=exc),
@@ -1931,10 +1979,12 @@ class ComputeManagerBuildInstanceTestCase(test.NoDBTestCase):
                 mock.patch.object(self.compute,
                     '_notify_about_instance_usage'),
                 mock.patch.object(self.compute,
-                    '_shutdown_instance')
+                    '_shutdown_instance'),
+                mock.patch.object(self.compute,
+                    '_validate_instance_group_policy')
         ) as (spawn, instance_update, save,
                 _build_networks_for_instance, _notify_about_instance_usage,
-                _shutdown_instance):
+                _shutdown_instance, _validate_instance_group_policy):
 
             self.assertRaises(exception.BuildAbortException,
                     self.compute._build_and_run_instance, self.context,
@@ -1943,6 +1993,8 @@ class ComputeManagerBuildInstanceTestCase(test.NoDBTestCase):
                     self.security_groups, self.block_device_mapping, self.node,
                     self.limits, self.filter_properties)
 
+            _validate_instance_group_policy.assert_called_once_with(
+                    self.context, self.instance, self.filter_properties)
             _build_networks_for_instance.assert_has_calls(
                     mock.call(self.context, self.instance,
                         self.requested_networks, self.security_groups))

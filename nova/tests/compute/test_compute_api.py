@@ -16,6 +16,7 @@
 import contextlib
 import copy
 import datetime
+
 import iso8601
 import mock
 import mox
@@ -173,6 +174,48 @@ class _ComputeAPIUnitTestMixIn(object):
                 self.assertEqual(message, e.kwargs['req'])
             else:
                 self.fail("Exception not raised")
+
+    def test_specified_port_and_multiple_instances_neutronv2(self):
+        # Tests that if port is specified there is only one instance booting
+        # (i.e max_count == 1) as we can't share the same port across multiple
+        # instances.
+        self.flags(network_api_class='nova.network.neutronv2.api.API')
+        port = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+        address = '10.0.0.1'
+        min_count = 1
+        max_count = 2
+        requested_networks = [(None, address, port)]
+
+        self.assertRaises(exception.MultiplePortsNotApplicable,
+            self.compute_api.create, self.context, 'fake_flavor', 'image_id',
+            min_count=min_count, max_count=max_count,
+            requested_networks=requested_networks)
+
+    def _test_specified_ip_and_multiple_instances_helper(self,
+                                                         requested_networks):
+        # Tests that if ip is specified there is only one instance booting
+        # (i.e max_count == 1)
+        min_count = 1
+        max_count = 2
+        self.assertRaises(exception.InvalidFixedIpAndMaxCountRequest,
+            self.compute_api.create, self.context, "fake_flavor", 'image_id',
+            min_count=min_count, max_count=max_count,
+            requested_networks=requested_networks)
+
+    def test_specified_ip_and_multiple_instances(self):
+        network = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+        address = '10.0.0.1'
+        requested_networks = [(network, address)]
+        self._test_specified_ip_and_multiple_instances_helper(
+            requested_networks)
+
+    def test_specified_ip_and_multiple_instances_neutronv2(self):
+        self.flags(network_api_class='nova.network.neutronv2.api.API')
+        network = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+        address = '10.0.0.1'
+        requested_networks = [(network, address, None)]
+        self._test_specified_ip_and_multiple_instances_helper(
+            requested_networks)
 
     def test_suspend(self):
         # Ensure instance can be suspended.
@@ -1394,7 +1437,7 @@ class _ComputeAPIUnitTestMixIn(object):
                              user_id='meow')
         if with_base_ref:
             fake_sys_meta['image_base_image_ref'] = 'fake-base-ref'
-        params = dict(system_metadata=fake_sys_meta)
+        params = dict(system_metadata=fake_sys_meta, locked=True)
         instance = self._create_instance_obj(params=params)
         fake_sys_meta.update(instance.system_metadata)
         extra_props = dict(cow='moo', cat='meow')
@@ -1548,7 +1591,8 @@ class _ComputeAPIUnitTestMixIn(object):
                                        with_base_ref=True)
 
     def test_snapshot_volume_backed(self):
-        instance = self._create_instance_obj()
+        params = dict(locked=True)
+        instance = self._create_instance_obj(params=params)
         instance['root_device_name'] = 'vda'
 
         instance_bdms = []

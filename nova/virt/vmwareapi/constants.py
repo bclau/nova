@@ -1,4 +1,4 @@
-#  Copyright 2013 Cloudbase Solutions Srl
+# Copyright (c) 2014 VMware, Inc.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
 #    not use this file except in compliance with the License. You may obtain
@@ -12,17 +12,14 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-from nova import test
-from nova.virt.hyperv import rdpconsoleutils
+"""
+Shared constants across the VMware driver
+"""
+
+from nova.network import model as network_model
 
 
-class RDPConsoleUtilsTestCase(test.NoDBTestCase):
-    def setUp(self):
-        self._rdpconsoleutils = rdpconsoleutils.RDPConsoleUtils()
-        super(RDPConsoleUtilsTestCase, self).setUp()
-
-    def test_get_rdp_console_port(self):
-        listener_port = self._rdpconsoleutils.get_rdp_console_port()
-
-        self.assertEqual(self._rdpconsoleutils._DEFAULT_HYPERV_RDP_PORT,
-                         listener_port)
+DEFAULT_VIF_MODEL = network_model.VIF_MODEL_E1000
+DEFAULT_OS_TYPE = "otherGuest"
+DEFAULT_ADAPTER_TYPE = "lsiLogic"
+DEFAULT_DISK_TYPE = "preallocated"

@@ -23,9 +23,9 @@ from nova.network import model as network_model
 from nova import test
 from nova.tests import matchers
 from nova.tests import utils
+from nova.tests.virt.vmwareapi import fake
 from nova.tests.virt.vmwareapi import test_vm_util
 from nova.virt.vmwareapi import error_util
-from nova.virt.vmwareapi import fake
 from nova.virt.vmwareapi import network_util
 from nova.virt.vmwareapi import vif
 from nova.virt.vmwareapi import vim_util
@@ -171,7 +171,7 @@ class VMwareVifTestCase(test.NoDBTestCase):
         ])[0]
         vif.get_network_ref(self.session, self.cluster, self.vif, False)
 
-    def test_get_network_ref_bridge(self):
+    def test_get_network_ref_bridge_from_opaque(self):
         opaque_networks = [{'opaqueNetworkId': 'bridge_id',
                             'opaqueNetworkName': 'name',
                             'opaqueNetworkType': 'OpaqueNetwork'}]
@@ -179,7 +179,7 @@ class VMwareVifTestCase(test.NoDBTestCase):
                 'integration_bridge', 'bridge_id')
         self.assertEqual('bridge_id', network_ref['network-id'])
 
-    def test_get_network_ref_bridges(self):
+    def test_get_network_ref_multiple_bridges_from_opaque(self):
         opaque_networks = [{'opaqueNetworkId': 'bridge_id1',
                             'opaqueNetworkName': 'name1',
                             'opaqueNetworkType': 'OpaqueNetwork'},

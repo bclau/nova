@@ -387,8 +387,8 @@ class API(base_api.NetworkAPI):
         # and in later runs will only be what was created that time. Thus,
         # this only affects the attach case, not the original use for this
         # method.
-        return network_model.NetworkInfo([port for port in nw_info
-                                          if port['id'] in created_port_ids +
+        return network_model.NetworkInfo([vif for vif in nw_info
+                                          if vif['id'] in created_port_ids +
                                                            touched_port_ids])
 
     def _refresh_neutron_extensions_cache(self, context):
@@ -1246,7 +1246,13 @@ class API(base_api.NetworkAPI):
                 subnet_object.add_dns(
                     network_model.IP(address=dns, type='dns'))
 
-            # TODO(gongysh) get the routes for this subnet
+            for route in subnet.get('host_routes', []):
+                subnet_object.add_route(
+                    network_model.Route(cidr=route['destination'],
+                                        gateway=network_model.IP(
+                                            address=route['nexthop'],
+                                            type='gateway')))
+
             subnets.append(subnet_object)
         return subnets
 

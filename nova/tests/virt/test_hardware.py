@@ -23,6 +23,147 @@ class FakeFlavor():
         self.extra_specs = extra_specs
 
 
+class CpuSetTestCase(test.NoDBTestCase):
+    def test_get_vcpu_pin_set(self):
+        self.flags(vcpu_pin_set="1-3,5,^2")
+        cpuset_ids = hw.get_vcpu_pin_set()
+        self.assertEqual([1, 3, 5], cpuset_ids)
+
+    def test_parse_cpu_spec_none_returns_none(self):
+        self.flags(vcpu_pin_set=None)
+        cpuset_ids = hw.get_vcpu_pin_set()
+        self.assertIsNone(cpuset_ids)
+
+    def test_parse_cpu_spec_valid_syntax_works(self):
+        cpuset_ids = hw.parse_cpu_spec("1")
+        self.assertEqual(set([1]), cpuset_ids)
+
+        cpuset_ids = hw.parse_cpu_spec("1,2")
+        self.assertEqual(set([1, 2]), cpuset_ids)
+
+        cpuset_ids = hw.parse_cpu_spec(", ,   1 ,  ,,  2,    ,")
+        self.assertEqual(set([1, 2]), cpuset_ids)
+
+        cpuset_ids = hw.parse_cpu_spec("1-1")
+        self.assertEqual(set([1]), cpuset_ids)
+
+        cpuset_ids = hw.parse_cpu_spec(" 1 - 1, 1 - 2 , 1 -3")
+        self.assertEqual(set([1, 2, 3]), cpuset_ids)
+
+        cpuset_ids = hw.parse_cpu_spec("1,^2")
+        self.assertEqual(set([1]), cpuset_ids)
+
+        cpuset_ids = hw.parse_cpu_spec("1-2, ^1")
+        self.assertEqual(set([2]), cpuset_ids)
+
+        cpuset_ids = hw.parse_cpu_spec("1-3,5,^2")
+        self.assertEqual(set([1, 3, 5]), cpuset_ids)
+
+        cpuset_ids = hw.parse_cpu_spec(" 1 -    3        ,   ^2,        5")
+        self.assertEqual(set([1, 3, 5]), cpuset_ids)
+
+        cpuset_ids = hw.parse_cpu_spec(" 1,1, ^1")
+        self.assertEqual(set([]), cpuset_ids)
+
+    def test_parse_cpu_spec_invalid_syntax_raises(self):
+        self.assertRaises(exception.Invalid,
+                          hw.parse_cpu_spec,
+                          " -1-3,5,^2")
+
+        self.assertRaises(exception.Invalid,
+                          hw.parse_cpu_spec,
+                          "1-3-,5,^2")
+
+        self.assertRaises(exception.Invalid,
+                          hw.parse_cpu_spec,
+                          "-3,5,^2")
+
+        self.assertRaises(exception.Invalid,
+                          hw.parse_cpu_spec,
+                          "1-,5,^2")
+
+        self.assertRaises(exception.Invalid,
+                          hw.parse_cpu_spec,
+                          "1-3,5,^2^")
+
+        self.assertRaises(exception.Invalid,
+                          hw.parse_cpu_spec,
+                          "1-3,5,^2-")
+
+        self.assertRaises(exception.Invalid,
+                          hw.parse_cpu_spec,
+                          "--13,^^5,^2")
+
+        self.assertRaises(exception.Invalid,
+                          hw.parse_cpu_spec,
+                          "a-3,5,^2")
+
+        self.assertRaises(exception.Invalid,
+                          hw.parse_cpu_spec,
+                          "1-a,5,^2")
+
+        self.assertRaises(exception.Invalid,
+                          hw.parse_cpu_spec,
+                          "1-3,b,^2")
+
+        self.assertRaises(exception.Invalid,
+                          hw.parse_cpu_spec,
+                          "1-3,5,^c")
+
+        self.assertRaises(exception.Invalid,
+                          hw.parse_cpu_spec,
+                          "3 - 1, 5 , ^ 2 ")
+
+    def test_format_cpu_spec(self):
+        cpus = set([])
+        spec = hw.format_cpu_spec(cpus)
+        self.assertEqual("", spec)
+
+        cpus = []
+        spec = hw.format_cpu_spec(cpus)
+        self.assertEqual("", spec)
+
+        cpus = set([1, 3])
+        spec = hw.format_cpu_spec(cpus)
+        self.assertEqual("1,3", spec)
+
+        cpus = [1, 3]
+        spec = hw.format_cpu_spec(cpus)
+        self.assertEqual("1,3", spec)
+
+        cpus = set([1, 2, 4, 6])
+        spec = hw.format_cpu_spec(cpus)
+        self.assertEqual("1-2,4,6", spec)
+
+        cpus = [1, 2, 4, 6]
+        spec = hw.format_cpu_spec(cpus)
+        self.assertEqual("1-2,4,6", spec)
+
+        cpus = set([10, 11, 13, 14, 15, 16, 19, 20, 40, 42, 48])
+        spec = hw.format_cpu_spec(cpus)
+        self.assertEqual("10-11,13-16,19-20,40,42,48", spec)
+
+        cpus = [10, 11, 13, 14, 15, 16, 19, 20, 40, 42, 48]
+        spec = hw.format_cpu_spec(cpus)
+        self.assertEqual("10-11,13-16,19-20,40,42,48", spec)
+
+        cpus = set([1, 2, 4, 6])
+        spec = hw.format_cpu_spec(cpus, allow_ranges=False)
+        self.assertEqual("1,2,4,6", spec)
+
+        cpus = [1, 2, 4, 6]
+        spec = hw.format_cpu_spec(cpus, allow_ranges=False)
+        self.assertEqual("1,2,4,6", spec)
+
+        cpus = set([10, 11, 13, 14, 15, 16, 19, 20, 40, 42, 48])
+        spec = hw.format_cpu_spec(cpus, allow_ranges=False)
+        self.assertEqual("10,11,13,14,15,16,19,20,40,42,48", spec)
+
+        cpus = [10, 11, 13, 14, 15, 16, 19, 20, 40, 42, 48]
+        spec = hw.format_cpu_spec(cpus, allow_ranges=False)
+        self.assertEqual("10,11,13,14,15,16,19,20,40,42,48", spec)
+
+
 class VCPUTopologyTest(test.NoDBTestCase):
 
     def test_validate_config(self):

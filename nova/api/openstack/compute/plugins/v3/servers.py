@@ -16,11 +16,11 @@
 
 import base64
 import re
-import stevedore
 
 from oslo.config import cfg
 from oslo import messaging
 import six
+import stevedore
 import webob
 from webob import exc
 
@@ -516,7 +516,9 @@ class ServersController(wsgi.Controller):
                 exception.InvalidMetadata,
                 exception.InvalidRequest,
                 exception.MultiplePortsNotApplicable,
+                exception.InvalidFixedIpAndMaxCountRequest,
                 exception.InstanceUserDataMalformed,
+                exception.InstanceUserDataTooLarge,
                 exception.PortNotFound,
                 exception.FixedIpAlreadyInUse,
                 exception.SecurityGroupNotFound,

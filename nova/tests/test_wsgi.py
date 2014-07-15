@@ -18,20 +18,20 @@
 
 import os.path
 import tempfile
-import testtools
+import urllib2
 
 import eventlet
 import eventlet.wsgi
 import mock
+from oslo.config import cfg
 import requests
+import testtools
+import webob
 
 import nova.exception
 from nova import test
 from nova.tests import utils
 import nova.wsgi
-from oslo.config import cfg
-import urllib2
-import webob
 
 SSL_CERT_DIR = os.path.normpath(os.path.join(
                                 os.path.dirname(os.path.abspath(__file__)),
@@ -156,6 +156,20 @@ class TestWSGIServer(test.NoDBTestCase):
                          requests.codes.REQUEST_URI_TOO_LARGE)
         server.stop()
         server.wait()
+
+    def test_reset_pool_size_to_default(self):
+        server = nova.wsgi.Server("test_resize", None,
+            host="127.0.0.1", max_url_len=16384)
+        server.start()
+
+        # Stopping the server, which in turn sets pool size to 0
+        server.stop()
+        self.assertEqual(server._pool.size, 0)
+
+        # Resetting pool size to default
+        server.reset()
+        server.start()
+        self.assertEqual(server._pool.size, CONF.wsgi_default_pool_size)
 
 
 class TestWSGIServerWithSSL(test.NoDBTestCase):

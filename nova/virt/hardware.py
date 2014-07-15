@@ -14,10 +14,129 @@
 
 import collections
 
+from oslo.config import cfg
+
 from nova import exception
+from nova.openstack.common.gettextutils import _
 from nova.openstack.common import log as logging
 
+virt_cpu_opts = [
+    cfg.StrOpt('vcpu_pin_set',
+                help='Defines which pcpus that instance vcpus can use. '
+               'For example, "4-12,^8,15"'),
+]
+
+CONF = cfg.CONF
+CONF.register_opts(virt_cpu_opts)
+
 LOG = logging.getLogger(__name__)
+
+
+def get_vcpu_pin_set():
+    """Parsing vcpu_pin_set config.
+
+    Returns a list of pcpu ids can be used by instances.
+    """
+    if not CONF.vcpu_pin_set:
+        return None
+
+    cpuset_ids = parse_cpu_spec(CONF.vcpu_pin_set)
+    if not cpuset_ids:
+        raise exception.Invalid(_("No CPUs available after parsing %r") %
+                                CONF.vcpu_pin_set)
+    return sorted(cpuset_ids)
+
+
+def parse_cpu_spec(spec):
+    """Parse a CPU set specification.
+
+    :param spec: cpu set string eg "1-4,^3,6"
+
+    Each element in the list is either a single
+    CPU number, a range of CPU numbers, or a
+    caret followed by a CPU number to be excluded
+    from a previous range.
+
+    :returns: a set of CPU indexes
+    """
+
+    cpuset_ids = set()
+    cpuset_reject_ids = set()
+    for rule in spec.split(','):
+        rule = rule.strip()
+        # Handle multi ','
+        if len(rule) < 1:
+            continue
+        # Note the count limit in the .split() call
+        range_parts = rule.split('-', 1)
+        if len(range_parts) > 1:
+            # So, this was a range; start by converting the parts to ints
+            try:
+                start, end = [int(p.strip()) for p in range_parts]
+            except ValueError:
+                raise exception.Invalid(_("Invalid range expression %r")
+                                        % rule)
+            # Make sure it's a valid range
+            if start > end:
+                raise exception.Invalid(_("Invalid range expression %r")
+                                        % rule)
+            # Add available CPU ids to set
+            cpuset_ids |= set(range(start, end + 1))
+        elif rule[0] == '^':
+            # Not a range, the rule is an exclusion rule; convert to int
+            try:
+                cpuset_reject_ids.add(int(rule[1:].strip()))
+            except ValueError:
+                raise exception.Invalid(_("Invalid exclusion "
+                                          "expression %r") % rule)
+        else:
+            # OK, a single CPU to include; convert to int
+            try:
+                cpuset_ids.add(int(rule))
+            except ValueError:
+                raise exception.Invalid(_("Invalid inclusion "
+                                          "expression %r") % rule)
+
+    # Use sets to handle the exclusion rules for us
+    cpuset_ids -= cpuset_reject_ids
+
+    return cpuset_ids
+
+
+def format_cpu_spec(cpuset, allow_ranges=True):
+    """Format a libvirt CPU range specification.
+
+    :param cpuset: set (or list) of CPU indexes
+
+    Format a set/list of CPU indexes as a libvirt CPU
+    range specification. It allow_ranges is true, it
+    will try to detect continuous ranges of CPUs,
+    otherwise it will just list each CPU index explicitly.
+
+    :returns: a formatted CPU range string
+    """
+
+    # We attempt to detect ranges, but don't bother with
+    # trying to do range negations to minimize the overall
+    # spec string length
+    if allow_ranges:
+        ranges = []
+        previndex = None
+        for cpuindex in sorted(cpuset):
+            if previndex is None or previndex != (cpuindex - 1):
+                ranges.append([])
+            ranges[-1].append(cpuindex)
+            previndex = cpuindex
+
+        parts = []
+        for entry in ranges:
+            if len(entry) == 1:
+                parts.append(str(entry[0]))
+            else:
+                parts.append("%d-%d" % (entry[0], entry[len(entry) - 1]))
+        return ",".join(parts)
+    else:
+        return ",".join(str(id) for id in sorted(cpuset))
 
 
 class VirtCPUTopology(object):

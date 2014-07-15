@@ -118,3 +118,93 @@ class DiagnosticsTests(test.NoDBTestCase):
         self.assertEqual(0, diags.memory_details.maximum)
         self.assertEqual(0, diags.memory_details.used)
         self.assertEqual('1.0', diags.version)
+
+    def test_add_cpu(self):
+        diags = diagnostics.Diagnostics()
+        self.assertEqual([], diags.cpu_details)
+        diags.add_cpu(time=7)
+        self.assertEqual(1, len(diags.cpu_details))
+        self.assertEqual(7, diags.cpu_details[0].time)
+
+    def test_add_nic(self):
+        diags = diagnostics.Diagnostics()
+        self.assertEqual([], diags.nic_details)
+        diags.add_nic(mac_address='00:00:ca:fe:00:00',
+                      rx_octets=1, rx_errors=2, rx_drop=3, rx_packets=4,
+                      tx_octets=5, tx_errors=6, tx_drop=7, tx_packets=8)
+        self.assertEqual(1, len(diags.nic_details))
+        self.assertEqual('00:00:ca:fe:00:00', diags.nic_details[0].mac_address)
+        self.assertEqual(1, diags.nic_details[0].rx_octets)
+        self.assertEqual(2, diags.nic_details[0].rx_errors)
+        self.assertEqual(3, diags.nic_details[0].rx_drop)
+        self.assertEqual(4, diags.nic_details[0].rx_packets)
+        self.assertEqual(5, diags.nic_details[0].tx_octets)
+        self.assertEqual(6, diags.nic_details[0].tx_errors)
+        self.assertEqual(7, diags.nic_details[0].tx_drop)
+        self.assertEqual(8, diags.nic_details[0].tx_packets)
+
+    def test_add_disk(self):
+        diags = diagnostics.Diagnostics()
+        self.assertEqual([], diags.disk_details)
+        diags.add_disk(id='fake_disk_id',
+                       read_bytes=1, read_requests=2,
+                       write_bytes=3, write_requests=4,
+                       errors_count=5)
+        self.assertEqual(1, len(diags.disk_details))
+        self.assertEqual('fake_disk_id', diags.disk_details[0].id)
+        self.assertEqual(1, diags.disk_details[0].read_bytes)
+        self.assertEqual(2, diags.disk_details[0].read_requests)
+        self.assertEqual(3, diags.disk_details[0].write_bytes)
+        self.assertEqual(4, diags.disk_details[0].write_requests)
+        self.assertEqual(5, diags.disk_details[0].errors_count)
+
+    def test_diagnostics_serialize_default(self):
+        diags = diagnostics.Diagnostics()
+        expected = {'config_drive': False,
+                    'cpu_details': [],
+                    'disk_details': [],
+                    'driver': None,
+                    'hypervisor_os': None,
+                    'memory_details': {'maximum': 0, 'used': 0},
+                    'nic_details': [],
+                    'state': None,
+                    'uptime': 0,
+                    'version': '1.0'}
+        result = diags.serialize()
+        self.assertEqual(expected, result)
+
+    def test_diagnostics_serialize(self):
+        cpu_details = [diagnostics.CpuDiagnostics()]
+        nic_details = [diagnostics.NicDiagnostics()]
+        disk_details = [diagnostics.DiskDiagnostics()]
+        diags = diagnostics.Diagnostics(
+                state='fake-state', driver='fake-driver',
+                hypervisor_os='fake-os',
+                uptime=1, cpu_details=cpu_details,
+                nic_details=nic_details, disk_details=disk_details,
+                config_drive=True)
+        expected = {'config_drive': True,
+                    'cpu_details': [{'time': 0}],
+                    'disk_details': [{'errors_count': 0,
+                                      'id': '',
+                                      'read_bytes': 0,
+                                      'read_requests': 0,
+                                      'write_bytes': 0,
+                                      'write_requests': 0}],
+                    'driver': 'fake-driver',
+                    'hypervisor_os': 'fake-os',
+                    'memory_details': {'maximum': 0, 'used': 0},
+                    'nic_details': [{'mac_address': '00:00:00:00:00:00',
+                                     'rx_drop': 0,
+                                     'rx_errors': 0,
+                                     'rx_octets': 0,
+                                     'rx_packets': 0,
+                                     'tx_drop': 0,
+                                     'tx_errors': 0,
+                                     'tx_octets': 0,
+                                     'tx_packets': 0}],
+                    'state': 'fake-state',
+                    'uptime': 1,
+                    'version': '1.0'}
+        result = diags.serialize()
+        self.assertEqual(expected, result)

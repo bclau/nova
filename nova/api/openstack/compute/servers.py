@@ -986,6 +986,7 @@ class Controller(wsgi.Controller):
                 exception.InvalidMetadata,
                 exception.InvalidRequest,
                 exception.MultiplePortsNotApplicable,
+                exception.InvalidFixedIpAndMaxCountRequest,
                 exception.NetworkNotFound,
                 exception.PortNotFound,
                 exception.FixedIpAlreadyInUse,
@@ -993,6 +994,7 @@ class Controller(wsgi.Controller):
                 exception.InvalidBDM,
                 exception.PortRequiresFixedIP,
                 exception.NetworkRequiresSubnet,
+                exception.InstanceUserDataTooLarge,
                 exception.InstanceUserDataMalformed) as error:
             raise exc.HTTPBadRequest(explanation=error.format_message())
         except (exception.PortInUse,
@@ -1187,6 +1189,8 @@ class Controller(wsgi.Controller):
         except exception.Invalid:
             msg = _("Invalid instance image.")
             raise exc.HTTPBadRequest(explanation=msg)
+        except exception.NoValidHost as e:
+            raise exc.HTTPBadRequest(explanation=e.format_message())
 
         return webob.Response(status_int=202)
 

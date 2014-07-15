@@ -16,6 +16,7 @@
 """Tests for the conductor service."""
 
 import contextlib
+
 import mock
 import mox
 from oslo import messaging
@@ -37,6 +38,7 @@ from nova import exception as exc
 from nova import notifications
 from nova import objects
 from nova.objects import base as obj_base
+from nova.objects import block_device as block_device_obj
 from nova.objects import fields
 from nova.objects import quotas as quotas_obj
 from nova.openstack.common import jsonutils
@@ -48,6 +50,7 @@ from nova.scheduler import utils as scheduler_utils
 from nova import test
 from nova.tests import cast_as_call
 from nova.tests.compute import test_compute
+from nova.tests import fake_block_device
 from nova.tests import fake_instance
 from nova.tests import fake_notifier
 from nova.tests import fake_server_actions
@@ -372,8 +375,14 @@ class ConductorTestCase(_BaseTestCase, test.TestCase):
                          copy_instance['name'])
 
     def test_block_device_mapping_update_or_create(self):
-        fake_bdm = {'id': 'fake-id', 'device_name': 'foo'}
-        fake_bdm2 = {'id': 'fake-id', 'device_name': 'foo2'}
+        fake_bdm = {'id': 1, 'device_name': 'foo',
+                    'source_type': 'volume', 'volume_id': 'fake-vol-id',
+                    'destination_type': 'volume'}
+        fake_bdm = fake_block_device.FakeDbBlockDeviceDict(fake_bdm)
+        fake_bdm2 = {'id': 1, 'device_name': 'foo2',
+                     'source_type': 'volume', 'volume_id': 'fake-vol-id',
+                     'destination_type': 'volume'}
+        fake_bdm2 = fake_block_device.FakeDbBlockDeviceDict(fake_bdm2)
         cells_rpcapi = self.conductor.cells_rpcapi
         self.mox.StubOutWithMock(db, 'block_device_mapping_create')
         self.mox.StubOutWithMock(db, 'block_device_mapping_update')
@@ -382,13 +391,14 @@ class ConductorTestCase(_BaseTestCase, test.TestCase):
                                  'bdm_update_or_create_at_top')
         db.block_device_mapping_create(self.context,
                                        fake_bdm).AndReturn(fake_bdm2)
-        cells_rpcapi.bdm_update_or_create_at_top(self.context, fake_bdm2,
-                                                 create=True)
+        cells_rpcapi.bdm_update_or_create_at_top(
+                self.context, mox.IsA(block_device_obj.BlockDeviceMapping),
+                create=True)
         db.block_device_mapping_update(self.context, fake_bdm['id'],
                                        fake_bdm).AndReturn(fake_bdm2)
-        cells_rpcapi.bdm_update_or_create_at_top(self.context,
-                                                 fake_bdm2,
-                                                 create=False)
+        cells_rpcapi.bdm_update_or_create_at_top(
+                self.context, mox.IsA(block_device_obj.BlockDeviceMapping),
+                create=False)
         self.mox.ReplayAll()
         self.conductor.block_device_mapping_update_or_create(self.context,
                                                              fake_bdm,
@@ -708,28 +718,6 @@ class ConductorTestCase(_BaseTestCase, test.TestCase):
         self.mox.ReplayAll()
         self.conductor.compute_unrescue(self.context, 'instance')
 
-    def test_instance_get_all_by_filters(self):
-        filters = {'foo': 'bar'}
-        self.mox.StubOutWithMock(db, 'instance_get_all_by_filters')
-        db.instance_get_all_by_filters(self.context, filters,
-                                       'fake-key', 'fake-sort',
-                                       columns_to_join=None, use_slave=False)
-        self.mox.ReplayAll()
-        self.conductor.instance_get_all_by_filters(self.context, filters,
-                                                   'fake-key', 'fake-sort',
-                                                   None, False)
-
-    def test_instance_get_all_by_filters_use_slave(self):
-        filters = {'foo': 'bar'}
-        self.mox.StubOutWithMock(db, 'instance_get_all_by_filters')
-        db.instance_get_all_by_filters(self.context, filters,
-                                       'fake-key', 'fake-sort',
-                                       columns_to_join=None, use_slave=True)
-        self.mox.ReplayAll()
-        self.conductor.instance_get_all_by_filters(self.context, filters,
-                                                   'fake-key', 'fake-sort',
-                                                   None, use_slave=True)
-
     def test_instance_get_active_by_window_joined(self):
         self.mox.StubOutWithMock(db, 'instance_get_active_by_window_joined')
         db.instance_get_active_by_window_joined(self.context, 'fake-begin',
@@ -786,9 +774,17 @@ class ConductorRPCAPITestCase(_BaseTestCase, test.TestCase):
         self.mox.StubOutWithMock(db, 'block_device_mapping_create')
         self.mox.StubOutWithMock(db, 'block_device_mapping_update')
         self.mox.StubOutWithMock(db, 'block_device_mapping_update_or_create')
+        self.mox.StubOutWithMock(block_device_obj.BlockDeviceMapping,
+                                 '_from_db_object')
         db.block_device_mapping_create(self.context, fake_bdm)
+        block_device_obj.BlockDeviceMapping._from_db_object(
+                self.context, mox.IgnoreArg(), mox.IgnoreArg())
         db.block_device_mapping_update(self.context, fake_bdm['id'], fake_bdm)
+        block_device_obj.BlockDeviceMapping._from_db_object(
+                self.context, mox.IgnoreArg(), mox.IgnoreArg())
         db.block_device_mapping_update_or_create(self.context, fake_bdm)
+        block_device_obj.BlockDeviceMapping._from_db_object(
+                self.context, mox.IgnoreArg(), mox.IgnoreArg())
         self.mox.ReplayAll()
         self.conductor.block_device_mapping_update_or_create(self.context,
                                                              fake_bdm,
@@ -905,10 +901,18 @@ class ConductorAPITestCase(_BaseTestCase, test.TestCase):
         self.mox.StubOutWithMock(db, 'block_device_mapping_create')
         self.mox.StubOutWithMock(db, 'block_device_mapping_update')
         self.mox.StubOutWithMock(db, 'block_device_mapping_update_or_create')
+        self.mox.StubOutWithMock(block_device_obj.BlockDeviceMapping,
+                                 '_from_db_object')
         db.block_device_mapping_create(self.context, 'fake-bdm')
+        block_device_obj.BlockDeviceMapping._from_db_object(
+                self.context, mox.IgnoreArg(), mox.IgnoreArg())
         db.block_device_mapping_update(self.context,
                                        'fake-id', {'id': 'fake-id'})
+        block_device_obj.BlockDeviceMapping._from_db_object(
+                self.context, mox.IgnoreArg(), mox.IgnoreArg())
         db.block_device_mapping_update_or_create(self.context, 'fake-bdm')
+        block_device_obj.BlockDeviceMapping._from_db_object(
+                self.context, mox.IgnoreArg(), mox.IgnoreArg())
 
         self.mox.ReplayAll()
         self.conductor.block_device_mapping_create(self.context, 'fake-bdm')
@@ -1670,8 +1674,10 @@ class ConductorTaskTestCase(_BaseTaskTestCase, test_compute.BaseTestCase):
 
         self.mox.ReplayAll()
 
-        self.conductor._cold_migrate(self.context, inst_obj,
-                                     'flavor', filter_props, [resvs])
+        self.assertRaises(exc.NoValidHost,
+                          self.conductor._cold_migrate,
+                          self.context, inst_obj,
+                          'flavor', filter_props, [resvs])
 
     def test_cold_migrate_no_valid_host_back_in_stopped_state(self):
         inst = fake_instance.fake_db_instance(image_ref='fake-image_ref',
@@ -1723,8 +1729,9 @@ class ConductorTaskTestCase(_BaseTaskTestCase, test_compute.BaseTestCase):
 
         self.mox.ReplayAll()
 
-        self.conductor._cold_migrate(self.context, inst_obj,
-                                     'flavor', filter_props, [resvs])
+        self.assertRaises(exc.NoValidHost,
+                          self.conductor._cold_migrate, self.context,
+                          inst_obj, 'flavor', filter_props, [resvs])
 
     def test_cold_migrate_exception_host_in_error_state_and_raise(self):
         inst = fake_instance.fake_db_instance(image_ref='fake-image_ref',

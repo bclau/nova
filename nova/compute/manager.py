@@ -68,6 +68,8 @@ from nova.objects import instance as instance_obj
 from nova.objects import quotas as quotas_obj
 from nova.openstack.common import excutils
 from nova.openstack.common.gettextutils import _
+from nova.openstack.common.gettextutils import _LE
+from nova.openstack.common.gettextutils import _LI
 from nova.openstack.common.gettextutils import _LW
 from nova.openstack.common import jsonutils
 from nova.openstack.common import log as logging
@@ -117,6 +119,10 @@ compute_opts = [
     cfg.IntOpt('network_allocate_retries',
                default=0,
                help="Number of times to retry network allocation on failures"),
+    cfg.IntOpt('block_device_allocate_retries',
+               default=60,
+               help='Number of times to retry block device'
+                    ' allocation on failures')
     ]
 
 interval_opts = [
@@ -159,7 +165,11 @@ interval_opts = [
     cfg.IntOpt('instance_delete_interval',
                default=300,
                help=('Interval in seconds for retrying failed instance file '
-                     'deletes'))
+                     'deletes')),
+    cfg.IntOpt('block_device_allocate_retries_interval',
+               default=3,
+               help='Waiting time interval (seconds) between block'
+                    ' device allocation retries on failures')
 ]
 
 timeout_opts = [
@@ -552,7 +562,7 @@ class ComputeVirtAPI(virtapi.VirtAPI):
 class ComputeManager(manager.Manager):
     """Manages the running instances from creation to destruction."""
 
-    target = messaging.Target(version='3.30')
+    target = messaging.Target(version='3.31')
 
     def __init__(self, compute_driver=None, *args, **kwargs):
         """Load configuration options and connect to the hypervisor."""
@@ -1143,24 +1153,21 @@ class ComputeManager(manager.Manager):
                                                              instance)
         return network_info
 
-    def _await_block_device_map_created(self, context, vol_id, max_tries=180,
-                                        wait_between=1):
+    def _await_block_device_map_created(self, context, vol_id):
         # TODO(yamahata): creating volume simultaneously
         #                 reduces creation time?
         # TODO(yamahata): eliminate dumb polling
-        # TODO(harlowja): make the max_tries configurable or dynamic?
         attempts = 0
         start = time.time()
-        while attempts < max_tries:
+        while attempts < CONF.block_device_allocate_retries:
             volume = self.volume_api.get(context, vol_id)
             volume_status = volume['status']
             if volume_status not in ['creating', 'downloading']:
                 if volume_status != 'available':
                     LOG.warn(_("Volume id: %s finished being created but was"
                                " not set as 'available'"), vol_id)
-                # NOTE(harlowja): return how many attempts were tried
                 return attempts + 1
-            greenthread.sleep(wait_between)
+            greenthread.sleep(CONF.block_device_allocate_retries_interval)
             attempts += 1
         # NOTE(harlowja): Should only happen if we ran out of attempts
         raise exception.VolumeNotCreated(volume_id=vol_id,
@@ -1430,7 +1437,7 @@ class ComputeManager(manager.Manager):
             task_state = task_states.SCHEDULING
 
             rescheduled = self._reschedule(context, request_spec,
-                    filter_properties, instance['uuid'],
+                    filter_properties, instance,
                     self.scheduler_rpcapi.run_instance, method_args,
                     task_state, exc_info)
 
@@ -1442,10 +1449,11 @@ class ComputeManager(manager.Manager):
         return rescheduled
 
     def _reschedule(self, context, request_spec, filter_properties,
-            instance_uuid, scheduler_method, method_args, task_state,
+            instance, scheduler_method, method_args, task_state,
             exc_info=None):
         """Attempt to re-schedule a compute operation."""
 
+        instance_uuid = instance['uuid']
         retry = filter_properties.get('retry', None)
         if not retry:
             # no retry information, do not reschedule.
@@ -2006,6 +2014,14 @@ class ComputeManager(manager.Manager):
             msg = _('Failed to allocate the network(s), not rescheduling.')
             raise exception.BuildAbortException(instance_uuid=instance.uuid,
                     reason=msg)
+        except (exception.FlavorDiskTooSmall,
+                exception.FlavorMemoryTooSmall,
+                exception.ImageNotActive,
+                exception.ImageUnacceptable) as e:
+            self._notify_about_instance_usage(context, instance,
+                    'create.error', fault=e)
+            raise exception.BuildAbortException(instance_uuid=instance.uuid,
+                    reason=e.format_message())
         except Exception as e:
             self._notify_about_instance_usage(context, instance,
                     'create.error', fault=e)
@@ -2347,14 +2363,21 @@ class ComputeManager(manager.Manager):
     @wrap_instance_fault
     def stop_instance(self, context, instance):
         """Stopping an instance on this host."""
-        self._notify_about_instance_usage(context, instance, "power_off.start")
-        self.driver.power_off(instance)
-        current_power_state = self._get_power_state(context, instance)
-        instance.power_state = current_power_state
-        instance.vm_state = vm_states.STOPPED
-        instance.task_state = None
-        instance.save(expected_task_state=task_states.POWERING_OFF)
-        self._notify_about_instance_usage(context, instance, "power_off.end")
+
+        @utils.synchronized(instance.uuid)
+        def do_stop_instance():
+            self._notify_about_instance_usage(context, instance,
+                                              "power_off.start")
+            self.driver.power_off(instance)
+            current_power_state = self._get_power_state(context, instance)
+            instance.power_state = current_power_state
+            instance.vm_state = vm_states.STOPPED
+            instance.task_state = None
+            instance.save(expected_task_state=task_states.POWERING_OFF)
+            self._notify_about_instance_usage(context, instance,
+                                              "power_off.end")
+
+        do_stop_instance()
 
     def _power_on(self, context, instance):
         network_info = self._get_instance_nw_info(context, instance)
@@ -3471,7 +3494,7 @@ class ComputeManager(manager.Manager):
             task_state = task_states.RESIZE_PREP
 
             rescheduled = self._reschedule(context, request_spec,
-                    filter_properties, instance_uuid, scheduler_method,
+                    filter_properties, instance, scheduler_method,
                     method_args, task_state, exc_info)
         except Exception as error:
             rescheduled = False
@@ -3782,6 +3805,24 @@ class ComputeManager(manager.Manager):
             LOG.audit(_("Retrieving diagnostics"), context=context,
                       instance=instance)
             return self.driver.get_diagnostics(instance)
+        else:
+            raise exception.InstanceInvalidState(
+                attr='power_state',
+                instance_uuid=instance.uuid,
+                state=instance.power_state,
+                method='get_diagnostics')
+
+    @object_compat
+    @wrap_exception()
+    @wrap_instance_fault
+    def get_instance_diagnostics(self, context, instance):
+        """Retrieve diagnostics for an instance on this host."""
+        current_power_state = self._get_power_state(context, instance)
+        if current_power_state == power_state.RUNNING:
+            LOG.audit(_("Retrieving diagnostics"), context=context,
+                      instance=instance)
+            diags = self.driver.get_instance_diagnostics(instance)
+            return diags.serialize()
         else:
             raise exception.InstanceInvalidState(
                 attr='power_state',
@@ -5324,34 +5365,43 @@ class ComputeManager(manager.Manager):
                       'num_vm_instances': num_vm_instances})
 
         for db_instance in db_instances:
-            if db_instance['task_state'] is not None:
-                LOG.info(_("During sync_power_state the instance has a "
-                           "pending task (%(task)s). Skip."),
-                         {'task': db_instance['task_state']},
-                         instance=db_instance)
-                continue
-            # No pending tasks. Now try to figure out the real vm_power_state.
+            #NOTE(melwitt): This must be synchronized as we query state from
+            #               two separate sources, the driver and the database.
+            #               They are set (in stop_instance) and read, in sync.
+            @utils.synchronized(db_instance.uuid)
+            def query_driver_power_state_and_sync():
+                self._query_driver_power_state_and_sync(context, db_instance)
+
             try:
-                try:
-                    vm_instance = self.driver.get_info(db_instance)
-                    vm_power_state = vm_instance['state']
-                except exception.InstanceNotFound:
-                    vm_power_state = power_state.NOSTATE
-                # Note(maoy): the above get_info call might take a long time,
-                # for example, because of a broken libvirt driver.
-                try:
-                    self._sync_instance_power_state(context,
-                                                    db_instance,
-                                                    vm_power_state,
-                                                    use_slave=True)
-                except exception.InstanceNotFound:
-                    # NOTE(hanlind): If the instance gets deleted during sync,
-                    # silently ignore and move on to next instance.
-                    continue
+                query_driver_power_state_and_sync()
             except Exception:
-                LOG.exception(_("Periodic sync_power_state task had an error "
-                                "while processing an instance."),
-                                instance=db_instance)
+                LOG.exception(_LE("Periodic sync_power_state task had an "
+                                  "error while processing an instance."),
+                              instance=db_instance)
+
+    def _query_driver_power_state_and_sync(self, context, db_instance):
+        if db_instance.task_state is not None:
+            LOG.info(_LI("During sync_power_state the instance has a "
+                         "pending task (%(task)s). Skip."),
+                     {'task': db_instance.task_state}, instance=db_instance)
+            return
+        # No pending tasks. Now try to figure out the real vm_power_state.
+        try:
+            vm_instance = self.driver.get_info(db_instance)
+            vm_power_state = vm_instance['state']
+        except exception.InstanceNotFound:
+            vm_power_state = power_state.NOSTATE
+        # Note(maoy): the above get_info call might take a long time,
+        # for example, because of a broken libvirt driver.
+        try:
+            self._sync_instance_power_state(context,
+                                            db_instance,
+                                            vm_power_state,
+                                            use_slave=True)
+        except exception.InstanceNotFound:
+            # NOTE(hanlind): If the instance gets deleted during sync,
+            # silently ignore.
+            pass
 
     def _sync_instance_power_state(self, context, db_instance, vm_power_state,
                                    use_slave=False):

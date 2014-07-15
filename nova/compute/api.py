@@ -851,7 +851,9 @@ class API(base.Base):
             return {}
 
         for bdm in block_device_mapping:
-            if legacy_bdm and bdm.get('device_name') != 'vda':
+            if (legacy_bdm and
+                    block_device.get_device_letter(
+                       bdm.get('device_name', '')) != 'a'):
                 continue
             elif not legacy_bdm and bdm.get('boot_index') != 0:
                 continue
@@ -1290,6 +1292,26 @@ class API(base.Base):
                         " instance one by one with different ports.")
                 raise exception.MultiplePortsNotApplicable(reason=msg)
 
+    def _check_multiple_instances_and_specified_ip(self, requested_networks):
+        """Check whether multiple instances are created with specified ip."""
+
+        error = False
+        if utils.is_neutron():
+            for net, ip, port in requested_networks:
+                if net and ip:
+                    error = True
+                    break
+        else:
+            # nova-network case
+            for id, ip in requested_networks:
+                if id and ip:
+                    error = True
+                    break
+        if error:
+            msg = _("max_count cannot be greater than 1 if an fixed_ip "
+                    "is specified.")
+            raise exception.InvalidFixedIpAndMaxCountRequest(reason=msg)
+
     @hooks.add_hook("create_instance")
     def create(self, context, instance_type,
                image_href, kernel_id=None, ramdisk_id=None,
@@ -1311,8 +1333,11 @@ class API(base.Base):
         self._check_create_policies(context, availability_zone,
                 requested_networks, block_device_mapping)
 
-        if requested_networks and max_count > 1 and utils.is_neutron():
-            self._check_multiple_instances_neutron_ports(requested_networks)
+        if requested_networks and max_count > 1:
+            self._check_multiple_instances_and_specified_ip(requested_networks)
+            if utils.is_neutron():
+                self._check_multiple_instances_neutron_ports(
+                    requested_networks)
 
         return self._create_instance(
                                context, instance_type,
@@ -1900,6 +1925,8 @@ class API(base.Base):
             context, filters=filters, sort_key=sort_key, sort_dir=sort_dir,
             limit=limit, marker=marker, expected_attrs=fields)
 
+    # NOTE(melwitt): We don't check instance lock for backup because lock is
+    #                intended to prevent accidental change/delete of instances
     @wrap_check_policy
     @check_instance_cell
     @check_instance_state(vm_state=[vm_states.ACTIVE, vm_states.STOPPED])
@@ -1932,6 +1959,8 @@ class API(base.Base):
                                             rotation)
         return image_meta
 
+    # NOTE(melwitt): We don't check instance lock for snapshot because lock is
+    #                intended to prevent accidental change/delete of instances
     @wrap_check_policy
     @check_instance_cell
     @check_instance_state(vm_state=[vm_states.ACTIVE, vm_states.STOPPED,
@@ -1994,6 +2023,8 @@ class API(base.Base):
 
         return self.image_api.create(context, sent_meta)
 
+    # NOTE(melwitt): We don't check instance lock for snapshot because lock is
+    #                intended to prevent accidental change/delete of instances
     @check_instance_state(vm_state=[vm_states.ACTIVE, vm_states.STOPPED])
     def snapshot_volume_backed(self, context, instance, image_meta, name,
                                extra_properties=None):
@@ -2534,6 +2565,12 @@ class API(base.Base):
     def get_diagnostics(self, context, instance):
         """Retrieve diagnostics for the given instance."""
         return self.compute_rpcapi.get_diagnostics(context, instance=instance)
+
+    @wrap_check_policy
+    def get_instance_diagnostics(self, context, instance):
+        """Retrieve diagnostics for the given instance."""
+        return self.compute_rpcapi.get_instance_diagnostics(context,
+                                                            instance=instance)
 
     @wrap_check_policy
     @check_instance_lock

@@ -22,16 +22,17 @@ import contextlib
 import datetime
 import operator
 import sys
-import testtools
 import time
 import traceback
 import uuid
 
+from eventlet import greenthread
 import mock
 import mox
 from oslo.config import cfg
 from oslo import messaging
 import six
+import testtools
 from testtools import matchers as testtools_matchers
 
 import nova
@@ -191,7 +192,8 @@ class BaseTestCase(test.TestCase):
                                    'free_ram_mb': 130560,
                                    'metrics': '',
                                    'stats': '',
-                                   'id': 2}]
+                                   'id': 2,
+                                   'host_ip': '127.0.0.1'}]
             return [objects.ComputeNode._from_db_object(
                         context, objects.ComputeNode(), cn)
                     for cn in fake_compute_nodes]
@@ -381,6 +383,8 @@ class ComputeVolumeTestCase(BaseTestCase):
                        lambda *a, **kw: None)
         self.stubs.Set(self.compute.volume_api, 'check_attach',
                        lambda *a, **kw: None)
+        self.stubs.Set(greenthread, 'sleep',
+                       lambda *a, **kw: None)
 
         def store_cinfo(context, *args, **kwargs):
             self.cinfo = jsonutils.loads(args[-1].get('connection_info'))
@@ -461,7 +465,9 @@ class ComputeVolumeTestCase(BaseTestCase):
             mock_get_by_id.assert_called_once_with(self.context, 'fake')
             self.assertTrue(mock_attach.called)
 
-    def test_await_block_device_created_to_slow(self):
+    def test_await_block_device_created_too_slow(self):
+        self.flags(block_device_allocate_retries=2)
+        self.flags(block_device_allocate_retries_interval=0.1)
 
         def never_get(context, vol_id):
             return {
@@ -472,13 +478,15 @@ class ComputeVolumeTestCase(BaseTestCase):
         self.stubs.Set(self.compute.volume_api, 'get', never_get)
         self.assertRaises(exception.VolumeNotCreated,
                           self.compute._await_block_device_map_created,
-                          self.context, '1', max_tries=2, wait_between=0.1)
+                          self.context, '1')
 
     def test_await_block_device_created_slow(self):
         c = self.compute
+        self.flags(block_device_allocate_retries=4)
+        self.flags(block_device_allocate_retries_interval=0.1)
 
         def slow_get(context, vol_id):
-            while self.fetched_attempts < 2:
+            if self.fetched_attempts < 2:
                 self.fetched_attempts += 1
                 return {
                     'status': 'creating',
@@ -490,9 +498,7 @@ class ComputeVolumeTestCase(BaseTestCase):
             }
 
         self.stubs.Set(c.volume_api, 'get', slow_get)
-        attempts = c._await_block_device_map_created(self.context, '1',
-                                                     max_tries=4,
-                                                     wait_between=0.1)
+        attempts = c._await_block_device_map_created(self.context, '1')
         self.assertEqual(attempts, 3)
 
     def test_boot_volume_serial(self):
@@ -3364,6 +3370,41 @@ class ComputeTestCase(BaseTestCase):
         self.assertEqual(diagnostics, expected_diagnostic)
         self.compute.terminate_instance(self.context, instance, [], [])
 
+    def test_instance_diagnostics(self):
+        # Make sure we can get diagnostics for an instance.
+        instance = jsonutils.to_primitive(self._create_fake_instance())
+        self.compute.run_instance(self.context, instance, {}, {}, [], None,
+                None, True, None, False)
+
+        diagnostics = self.compute.get_instance_diagnostics(self.context,
+                instance=instance)
+        expected = {'config_drive': True,
+                    'cpu_details': [{'time': 17300000000}],
+                    'disk_details': [{'errors_count': 0,
+                                      'id': 'fake-disk-id',
+                                      'read_bytes': 262144,
+                                      'read_requests': 112,
+                                      'write_bytes': 5778432,
+                                      'write_requests': 488}],
+                    'driver': 'fake',
+                    'hypervisor_os': 'fake-os',
+                    'memory_details': {'maximum': 524288, 'used': 0},
+                    'nic_details': [{'mac_address': '01:23:45:67:89:ab',
+                                     'rx_drop': 0,
+                                     'rx_errors': 0,
+                                     'rx_octets': 2070139,
+                                     'rx_packets': 26701,
+                                     'tx_drop': 0,
+                                     'tx_errors': 0,
+                                     'tx_octets': 140208,
+                                     'tx_packets': 662}],
+                    'state': 'running',
+                    'uptime': 46664,
+                    'version': '1.0'}
+        self.assertEqual(expected, diagnostics)
+        self.compute.terminate_instance(self.context,
+                self._objectify(instance), [], [])
+
     def test_add_fixed_ip_usage_notification(self):
         def dummy(*args, **kwargs):
             pass
@@ -3475,7 +3516,7 @@ class ComputeTestCase(BaseTestCase):
         self.assertEqual('INFO', msg.priority)
         payload = msg.payload
         message = payload['message']
-        self.assertTrue(message.find("already deleted") != -1)
+        self.assertNotEqual(-1, message.find("already deleted"))
 
     def test_run_instance_error_notification_on_reschedule(self):
         # Test that error notif is sent if the build got rescheduled
@@ -3500,7 +3541,7 @@ class ComputeTestCase(BaseTestCase):
         self.assertEqual('ERROR', msg.priority)
         payload = msg.payload
         message = payload['message']
-        self.assertTrue(message.find("something bad happened") != -1)
+        self.assertNotEqual(-1, message.find("something bad happened"))
 
     def test_run_instance_error_notification_on_failure(self):
         # Test that error notif is sent if build fails hard
@@ -3524,7 +3565,7 @@ class ComputeTestCase(BaseTestCase):
         self.assertEqual('ERROR', msg.priority)
         payload = msg.payload
         message = payload['message']
-        self.assertTrue(message.find("i'm dying") != -1)
+        self.assertNotEqual(-1, message.find("i'm dying"))
 
     def test_terminate_usage_notification(self):
         # Ensure terminate_instance generates correct usage notification.
@@ -6394,7 +6435,7 @@ class ComputeTestCase(BaseTestCase):
 
         self.compute._complete_partial_deletion(admin_context, instance)
 
-        self.assertFalse(instance.deleted == 0)
+        self.assertNotEqual(0, instance.deleted)
 
     def test_init_instance_for_partial_deletion(self):
         admin_context = context.get_admin_context()
@@ -6411,7 +6452,7 @@ class ComputeTestCase(BaseTestCase):
                        fake_partial_deletion)
         self.compute._init_instance(admin_context, instance)
 
-        self.assertFalse(instance['deleted'] == 0)
+        self.assertNotEqual(0, instance['deleted'])
 
     def test_partial_deletion_raise_exception(self):
         admin_context = context.get_admin_context()
@@ -6967,7 +7008,7 @@ class ComputeAPITestCase(BaseTestCase):
             self.assertEqual(len(db.security_group_get_by_instance(
                              self.context, ref[0]['uuid'])), 1)
             group = db.security_group_get(self.context, group['id'])
-            self.assertTrue(len(group['instances']) == 1)
+            self.assertEqual(1, len(group['instances']))
         finally:
             db.security_group_destroy(self.context, group['id'])
             db.instance_destroy(self.context, ref[0]['uuid'])
@@ -7127,7 +7168,7 @@ class ComputeAPITestCase(BaseTestCase):
         try:
             db.instance_destroy(self.context, ref[0]['uuid'])
             group = db.security_group_get(self.context, group['id'])
-            self.assertTrue(len(group['instances']) == 0)
+            self.assertEqual(0, len(group['instances']))
         finally:
             db.security_group_destroy(self.context, group['id'])
 
@@ -7146,7 +7187,7 @@ class ComputeAPITestCase(BaseTestCase):
             admin_deleted_context = context.get_admin_context(
                     read_deleted="only")
             group = db.security_group_get(admin_deleted_context, group['id'])
-            self.assertTrue(len(group['instances']) == 0)
+            self.assertEqual(0, len(group['instances']))
         finally:
             db.instance_destroy(self.context, ref[0]['uuid'])
 
@@ -7786,20 +7827,20 @@ class ComputeAPITestCase(BaseTestCase):
         _context.project_id = 'project1'
         metadata = self.compute_api.get_all_instance_metadata(_context,
                                                               search_filts=[])
-        self.assertTrue(len(metadata) == 1)
+        self.assertEqual(1, len(metadata))
         self.assertEqual(metadata[0]['key'], 'key1')
 
         _context.user_id = 'user2'
         _context.project_id = 'project2'
         metadata = self.compute_api.get_all_instance_metadata(_context,
                                                               search_filts=[])
-        self.assertTrue(len(metadata) == 1)
+        self.assertEqual(1, len(metadata))
         self.assertEqual(metadata[0]['key'], 'key2')
 
         _context = context.get_admin_context()
         metadata = self.compute_api.get_all_instance_metadata(_context,
                                                               search_filts=[])
-        self.assertTrue(len(metadata) == 2)
+        self.assertEqual(2, len(metadata))
 
     def test_instance_metadata(self):
         meta_changes = [None]
@@ -8995,6 +9036,20 @@ class ComputeAPITestCase(BaseTestCase):
                        lambda *a, **kw: None)
         self.compute_api.delete(self.context, self._objectify(instance))
 
+    def test_get_instance_diagnostics(self):
+        instance = self._create_fake_instance()
+
+        rpcapi = compute_rpcapi.ComputeAPI
+        self.mox.StubOutWithMock(rpcapi, 'get_instance_diagnostics')
+        rpcapi.get_instance_diagnostics(self.context, instance=instance)
+        self.mox.ReplayAll()
+
+        self.compute_api.get_instance_diagnostics(self.context, instance)
+
+        self.stubs.Set(self.compute_api.network_api, 'deallocate_for_instance',
+                       lambda *a, **kw: None)
+        self.compute_api.delete(self.context, self._objectify(instance))
+
     def test_secgroup_refresh(self):
         instance = self._create_fake_instance()
 
@@ -10064,7 +10119,7 @@ class ComputeReschedulingTestCase(BaseTestCase):
         if not filter_properties:
             filter_properties = {}
 
-        instance_uuid = "12-34-56-78-90"
+        instance = self._create_fake_instance_obj()
 
         admin_password = None
         injected_files = None
@@ -10075,7 +10130,7 @@ class ComputeReschedulingTestCase(BaseTestCase):
         method_args = (request_spec, admin_password, injected_files,
                        requested_networks, is_first_time, filter_properties)
         return self.compute._reschedule(self.context, request_spec,
-                filter_properties, instance_uuid, scheduler_method,
+                filter_properties, instance, scheduler_method,
                 method_args, self.expected_task_state, exc_info=exc_info)
 
     def test_reschedule_no_filter_properties(self):
@@ -10135,7 +10190,7 @@ class ComputeReschedulingResizeTestCase(ComputeReschedulingTestCase):
                 filter_properties, reservations)
 
         return self.compute._reschedule(self.context, request_spec,
-                filter_properties, instance_uuid, scheduler_method,
+                filter_properties, instance, scheduler_method,
                 method_args, self.expected_task_state, exc_info=exc_info)
 
 
@@ -10254,7 +10309,7 @@ class ComputeRescheduleOrErrorTestCase(BaseTestCase):
                                         mox.IgnoreArg())
         self.compute._cleanup_volumes(self.context, instance_uuid,
                                         mox.IgnoreArg())
-        self.compute._reschedule(self.context, None, instance_uuid,
+        self.compute._reschedule(self.context, None, self.instance,
                 {}, self.compute.scheduler_rpcapi.run_instance,
                 method_args, task_states.SCHEDULING, exc_info).AndRaise(
                         InnerTestingException("Inner"))
@@ -10284,7 +10339,7 @@ class ComputeRescheduleOrErrorTestCase(BaseTestCase):
                                             mox.IgnoreArg())
             self.compute._cleanup_volumes(self.context, instance_uuid,
                                             mox.IgnoreArg())
-            self.compute._reschedule(self.context, None, {}, instance_uuid,
+            self.compute._reschedule(self.context, None, {}, self.instance,
                     self.compute.scheduler_rpcapi.run_instance, method_args,
                     task_states.SCHEDULING, exc_info).AndReturn(False)
 
@@ -10315,7 +10370,7 @@ class ComputeRescheduleOrErrorTestCase(BaseTestCase):
                                             mox.IgnoreArg())
             self.compute._cleanup_volumes(self.context, instance_uuid,
                                           mox.IgnoreArg())
-            self.compute._reschedule(self.context, None, {}, instance_uuid,
+            self.compute._reschedule(self.context, None, {}, self.instance,
                     self.compute.scheduler_rpcapi.run_instance,
                     method_args, task_states.SCHEDULING, exc_info).AndReturn(
                             True)
@@ -10424,7 +10479,7 @@ class ComputeRescheduleResizeOrReraiseTestCase(BaseTestCase):
         self.mox.StubOutWithMock(self.compute, "_reschedule")
 
         self.compute._reschedule(
-                self.context, None, None, instance.uuid,
+                self.context, None, None, instance,
                 self.compute.scheduler_rpcapi.prep_resize, method_args,
                 task_states.RESIZE_PREP).AndRaise(
                         InnerTestingException("Inner"))
@@ -10448,7 +10503,7 @@ class ComputeRescheduleResizeOrReraiseTestCase(BaseTestCase):
         self.mox.StubOutWithMock(self.compute, "_reschedule")
 
         self.compute._reschedule(
-                self.context, None, None, instance.uuid,
+                self.context, None, None, instance,
                 self.compute.scheduler_rpcapi.prep_resize, method_args,
                 task_states.RESIZE_PREP).AndReturn(False)
         self.mox.ReplayAll()
@@ -10475,7 +10530,7 @@ class ComputeRescheduleResizeOrReraiseTestCase(BaseTestCase):
             self.mox.StubOutWithMock(self.compute, "_reschedule")
             self.mox.StubOutWithMock(self.compute, "_log_original_error")
             self.compute._reschedule(self.context, {}, {},
-                    instance.uuid,
+                    instance,
                     self.compute.scheduler_rpcapi.prep_resize, method_args,
                     task_states.RESIZE_PREP, exc_info).AndReturn(True)
 

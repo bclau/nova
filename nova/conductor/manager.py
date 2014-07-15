@@ -204,9 +204,9 @@ class ConductorManager(manager.Manager):
             bdm = self.db.block_device_mapping_update(context,
                                                       values['id'],
                                                       values)
-        # NOTE:comstud): 'bdm' is always in the new format, so we
-        # account for this in cells/messaging.py
-        self.cells_rpcapi.bdm_update_or_create_at_top(context, bdm,
+        bdm_obj = objects.BlockDeviceMapping._from_db_object(
+                context, objects.BlockDeviceMapping(), bdm)
+        self.cells_rpcapi.bdm_update_or_create_at_top(context, bdm_obj,
                                                       create=create)
 
     def block_device_mapping_get_all_by_instance(self, context, instance,
@@ -520,9 +520,8 @@ class ComputeTaskManager(base.Base):
                                           updates, ex, request_spec)
             quotas.rollback()
 
-            LOG.warning(_("No valid host found for cold migrate"),
-                        instance=instance)
-            return
+            msg = _("No valid host found for cold migrate")
+            raise exception.NoValidHost(reason=msg)
 
         try:
             scheduler_utils.populate_filter_properties(filter_properties,

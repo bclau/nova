@@ -32,9 +32,8 @@ from nova.compute import task_states
 from nova.compute import vm_states
 from nova import context as nova_context
 from nova import exception
-from nova.network import model as network_model
 from nova.openstack.common import excutils
-from nova.openstack.common.gettextutils import _
+from nova.openstack.common.gettextutils import _, _LE
 from nova.openstack.common import lockutils
 from nova.openstack.common import log as logging
 from nova.openstack.common import strutils
@@ -43,6 +42,7 @@ from nova.openstack.common import uuidutils
 from nova import utils
 from nova.virt import configdrive
 from nova.virt import driver
+from nova.virt.vmwareapi import constants
 from nova.virt.vmwareapi import ds_util
 from nova.virt.vmwareapi import error_util
 from nova.virt.vmwareapi import imagecache
@@ -218,14 +218,15 @@ class VMwareVMOps(object):
 
             image_size, image_properties = _image_info
             vmdk_file_size_in_kb = int(image_size) / 1024
-            os_type = image_properties.get("vmware_ostype", "otherGuest")
+            os_type = image_properties.get("vmware_ostype",
+                                           constants.DEFAULT_OS_TYPE)
             adapter_type = image_properties.get("vmware_adaptertype",
-                                                "lsiLogic")
+                                                constants.DEFAULT_ADAPTER_TYPE)
             disk_type = image_properties.get("vmware_disktype",
-                                             "preallocated")
+                                             constants.DEFAULT_DISK_TYPE)
             # Get the network card type from the image properties.
             vif_model = image_properties.get("hw_vif_model",
-                                             network_model.VIF_MODEL_E1000)
+                                             constants.DEFAULT_VIF_MODEL)
 
             # Fetch the image_linked_clone data here. It is retrieved
             # with the above network based API call. To retrieve it
@@ -267,6 +268,10 @@ class VMwareVMOps(object):
 
         vm_ref = vm_util.create_vm(self._session, instance, dc_info.vmFolder,
                                    config_spec, res_pool_ref)
+
+        # Cache the vm_ref. This saves a remote call to the VC. This uses the
+        # instance_name. This covers all use cases including rescue and resize.
+        vm_util.vm_ref_cache_update(instance_name, vm_ref)
 
         # Set the machine.id parameter of the instance to inject
         # the NIC configuration inside the VM
@@ -453,27 +458,66 @@ class VMwareVMOps(object):
                     root_vmdk_name = "%s.%s.vmdk" % (upload_name, root_gb)
                     root_vmdk_path = str(datastore.build_path(
                             upload_folder, root_vmdk_name))
-                    if not self._check_if_folder_file_exists(
-                            ds_browser,
-                            datastore.ref, datastore.name,
-                            upload_folder,
-                            upload_name + ".%s.vmdk" % root_gb):
-                        LOG.debug("Copying root disk of size %sGb", root_gb)
-                        try:
+
+                    # Ensure only a single thread extends the image at once.
+                    # We do this by taking a lock on the name of the extended
+                    # image. This allows multiple threads to create resized
+                    # copies simultaneously, as long as they are different
+                    # sizes. Threads attempting to create the same resized copy
+                    # will be serialized, with only the first actually creating
+                    # the copy.
+                    #
+                    # Note that the object is in a per-nova cache directory,
+                    # so inter-nova locking is not a concern. Consequently we
+                    # can safely use simple thread locks.
+
+                    with lockutils.lock(root_vmdk_path,
+                                        lock_file_prefix='nova-vmware-image'):
+                        if not self._check_if_folder_file_exists(
+                                ds_browser,
+                                datastore.ref, datastore.name,
+                                upload_folder,
+                                root_vmdk_name):
+                            LOG.debug("Copying root disk of size %sGb",
+                                      root_gb)
+
                             copy_spec = self.get_copy_virtual_disk_spec(
                                 client_factory, adapter_type, disk_type)
-                            vm_util.copy_virtual_disk(self._session,
-                                                      dc_info.ref,
-                                                      uploaded_file_path,
-                                                      root_vmdk_path,
-                                                      copy_spec)
-                        except Exception as e:
-                            LOG.warning(_("Root disk file creation "
-                                          "failed - %s"), e)
-                        if root_gb_in_kb > vmdk_file_size_in_kb:
-                            self._extend_virtual_disk(instance, root_gb_in_kb,
-                                                      root_vmdk_path,
-                                                      dc_info.ref)
+
+                            # Create a copy of the base image, ensuring we
+                            # clean up on failure
+                            try:
+                                vm_util.copy_virtual_disk(self._session,
+                                                          dc_info.ref,
+                                                          uploaded_file_path,
+                                                          root_vmdk_path,
+                                                          copy_spec)
+                            except Exception as e:
+                                with excutils.save_and_reraise_exception():
+                                    LOG.error(_LE('Failed to copy cached '
+                                                  'image %(source)s to '
+                                                  '%(dest)s for resize: '
+                                                  '%(error)s'),
+                                              {'source': uploaded_file_path,
+                                               'dest': root_vmdk_path,
+                                               'error': e.message})
+                                    try:
+                                        ds_util.file_delete(self._session,
+                                                            root_vmdk_path,
+                                                            dc_info.ref)
+                                    except error_util.FileNotFoundException:
+                                        # File was never created: cleanup not
+                                        # required
+                                        pass
+
+                            # Resize the copy to the appropriate size. No need
+                            # for cleanup up here, as _extend_virtual_disk
+                            # already does it
+                            if root_gb_in_kb > vmdk_file_size_in_kb:
+                                self._extend_virtual_disk(instance,
+                                                          root_gb_in_kb,
+                                                          root_vmdk_path,
+                                                          dc_info.ref)
 
             # Attach the root disk to the VM.
             if root_vmdk_path:
@@ -761,7 +805,7 @@ class VMwareVMOps(object):
                 image_id,
                 instance,
                 os_type=os_type,
-                disk_type="preallocated",
+                disk_type=constants.DEFAULT_DISK_TYPE,
                 adapter_type=adapter_type,
                 image_version=1,
                 host=self._session._host_ip,
@@ -833,6 +877,10 @@ class VMwareVMOps(object):
             instance_name = instance['uuid']
         try:
             vm_ref = vm_util.get_vm_ref_from_name(self._session, instance_name)
+            if vm_ref is None:
+                LOG.warning(_('Instance does not exist on backend'),
+                            instance=instance)
+                return
             lst_properties = ["config.files.vmPathName", "runtime.powerState",
                               "datastore"]
             props = self._session._call_method(vim_util,
@@ -974,7 +1022,7 @@ class VMwareVMOps(object):
 
         self.power_off(instance)
         r_instance = copy.deepcopy(instance)
-        instance_name = r_instance['uuid'] + self._rescue_suffix
+        instance_name = r_instance.uuid + self._rescue_suffix
         self.spawn(context, r_instance, image_meta,
                    None, None, network_info,
                    instance_name=instance_name,
@@ -986,7 +1034,7 @@ class VMwareVMOps(object):
                         "VirtualMachine", "config.hardware.device")
         (vmdk_path, adapter_type,
          disk_type) = vm_util.get_vmdk_path_and_adapter_type(
-                hardware_devices, uuid=instance['uuid'])
+                hardware_devices, uuid=instance.uuid)
         rescue_vm_ref = vm_util.get_vm_ref_from_name(self._session,
                                                      instance_name)
         self._volumeops.attach_disk_to_vm(
@@ -1004,10 +1052,10 @@ class VMwareVMOps(object):
                         "VirtualMachine", "config.hardware.device")
         (vmdk_path, adapter_type,
          disk_type) = vm_util.get_vmdk_path_and_adapter_type(
-                hardware_devices, uuid=instance['uuid'])
+                hardware_devices, uuid=instance.uuid)
 
         r_instance = copy.deepcopy(instance)
-        instance_name = r_instance['uuid'] + self._rescue_suffix
+        instance_name = r_instance.uuid + self._rescue_suffix
         # detach the original instance disk from the rescue disk
         vm_rescue_ref = vm_util.get_vm_ref_from_name(self._session,
                                                      instance_name)
@@ -1455,6 +1503,13 @@ class VMwareVMOps(object):
             else:
                 break
         return lst_vm_names
+
+    def instance_exists(self, instance):
+        try:
+            vm_util.get_vm_ref(self._session, instance)
+            return True
+        except exception.InstanceNotFound:
+            return False
 
 
 class VMwareVCVMOps(VMwareVMOps):

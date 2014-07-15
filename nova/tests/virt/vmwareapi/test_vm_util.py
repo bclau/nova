@@ -15,9 +15,9 @@
 #    under the License.
 
 import collections
+import contextlib
 import re
 
-import contextlib
 import mock
 
 from nova import exception
@@ -26,8 +26,8 @@ from nova.openstack.common.gettextutils import _
 from nova.openstack.common import units
 from nova.openstack.common import uuidutils
 from nova import test
+from nova.tests.virt.vmwareapi import fake
 from nova.virt.vmwareapi import error_util
-from nova.virt.vmwareapi import fake
 from nova.virt.vmwareapi import vm_util
 
 
@@ -570,7 +570,7 @@ class VMwareVMUtilTestCase(test.NoDBTestCase):
         fake_objects.add_object(fake.ClusterComputeResource(name='cluster'))
         refs = vm_util.get_all_cluster_refs_by_name(fake_session(fake_objects),
                                                     ['cluster'])
-        self.assertTrue(len(refs) == 1)
+        self.assertEqual(1, len(refs))
 
     def test_get_all_cluster_refs_by_name_missing(self):
         fake_objects = fake.FakeRetrieveResult()

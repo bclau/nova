@@ -238,7 +238,8 @@ class XenAPIVolumeTestCase(stubs.XenAPITestBaseNoDB):
         conn = xenapi_conn.XenAPIDriver(fake.FakeVirtAPI(), False)
         vm = xenapi_fake.create_vm(self.instance['name'], 'Running')
         conn_info = self._make_connection_info()
-        conn.attach_volume(None, conn_info, self.instance, '/dev/sdc')
+        self.assertIsNone(
+            conn.attach_volume(None, conn_info, self.instance, '/dev/sdc'))
 
         # check that the VM has a VBD attached to it
         # Get XenAPI record for VBD
@@ -873,19 +874,30 @@ class XenAPIVMTestCase(stubs.XenAPITestBase):
         self._tee_executed = False
 
         def _tee_handler(cmd, **kwargs):
-            input = kwargs.get('process_input', None)
-            self.assertIsNotNone(input)
-            config = [line.strip() for line in input.split("\n")]
-            # Find the start of eth0 configuration and check it
-            index = config.index('auto eth0')
-            self.assertEqual(config[index + 1:index + 8], [
-                'iface eth0 inet static',
-                'address 192.168.1.100',
-                'netmask 255.255.255.0',
-                'broadcast 192.168.1.255',
-                'gateway 192.168.1.1',
-                'dns-nameservers 192.168.1.3 192.168.1.4',
-                ''])
+            actual = kwargs.get('process_input', None)
+            expected = """\
+# Injected by Nova on instance boot
+#
+# This file describes the network interfaces available on your system
+# and how to activate them. For more information, see interfaces(5).
+
+# The loopback network interface
+auto lo
+iface lo inet loopback
+
+auto eth0
+iface eth0 inet static
+    address 192.168.1.100
+    netmask 255.255.255.0
+    broadcast 192.168.1.255
+    gateway 192.168.1.1
+    dns-nameservers 192.168.1.3 192.168.1.4
+iface eth0 inet6 static
+    address 2001:db8:0:1::1
+    netmask ffff:ffff:ffff:ffff::
+    gateway 2001:db8:0:1::1
+"""
+            self.assertEqual(expected, actual)
             self._tee_executed = True
             return '', ''
 
@@ -2610,7 +2622,7 @@ class XenAPIDom0IptablesFirewallTestCase(stubs.XenAPITestBase):
 
         network_model = fake_network.fake_get_instance_nw_info(self.stubs, 1)
 
-        from nova.compute import utils as compute_utils
+        from nova.compute import utils as compute_utils  # noqa
         self.stubs.Set(compute_utils, 'get_nw_info_for_instance',
                        lambda instance: network_model)
 
@@ -3606,7 +3618,7 @@ class XenAPILiveMigrateTestCase(stubs.XenAPITestBaseNoDB):
             pass
 
         conn.live_migration(
-            self.context, instance_ref=dict(name='ignore'), dest=None,
+            self.context, instance=dict(name='ignore'), dest=None,
             post_method=dummy_callback, recover_method=dummy_callback,
             block_migration="SOMEDATA",
             migrate_data=dict(migrate_send_data='SOMEDATA',
@@ -3634,7 +3646,7 @@ class XenAPILiveMigrateTestCase(stubs.XenAPITestBaseNoDB):
             pass
 
         self.assertRaises(IOError, conn.live_migration,
-            self.context, instance_ref=dict(name='ignore'), dest=None,
+            self.context, instance=dict(name='ignore'), dest=None,
             post_method=dummy_callback, recover_method=dummy_callback,
             block_migration=False, migrate_data={})
 
