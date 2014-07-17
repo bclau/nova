@@ -19,6 +19,7 @@ Management class for basic VM operations.
 """
 import functools
 import os
+import time
 
 from oslo.config import cfg
 
@@ -362,7 +363,22 @@ class VMOps(object):
     def reboot(self, instance, network_info, reboot_type):
         """Reboot the specified instance."""
         LOG.debug("Rebooting instance", instance=instance)
-        self._set_vm_state(instance['name'],
+
+        instance_name = instance['name']
+        if reboot_type == constants.REBOOT_TYPE_SOFT:
+            try:
+                self._vmutils.soft_shutdown_vm(instance_name)
+                self._wait_for_power_off(instance_name)
+                LOG.info(_('VM %s is shutdown. Starting VM.' % instance_name))
+                self._set_vm_state(instance_name,
+                                   constants.HYPERV_VM_STATE_ENABLED)
+                return
+            except Exception as e:
+                LOG.exception(e)
+                LOG.error(_("Soft reboot on %s failed. Trying hard reboot." %
+                            instance_name))
+
+        self._set_vm_state(instance_name,
                            constants.HYPERV_VM_STATE_REBOOT)
 
     def pause(self, instance):
@@ -412,3 +428,21 @@ class VMOps(object):
                 LOG.error(_("Failed to change vm state of %(vm_name)s"
                             " to %(req_state)s"),
                           {'vm_name': vm_name, 'req_state': req_state})
+
+    def _get_vm_state(self, vm_name):
+        summary_info = self._vmutils.get_vm_summary_info(vm_name)
+        return summary_info['EnabledState']
+
+    def _wait_for_power_off(self, vm_name, time_limit=5):
+        """Waiting for a VM to be in either a disabled or shutdown state."""
+        time_elapsed = 0
+        desired_vm_states = [constants.HYPERV_VM_STATE_DISABLED]
+        while time_elapsed < time_limit:
+            if self._get_vm_state(vm_name) in desired_vm_states:
+                return
+
+            time.sleep(0.1)
+            time_elapsed += 0.1
+
+        raise vmutils.HyperVException(_('VM %s has not be shutdown within the '
+                                        'time limit.' % vm_name))
