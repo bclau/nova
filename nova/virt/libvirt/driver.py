@@ -106,6 +106,11 @@ libvirt = None
 LOG = logging.getLogger(__name__)
 
 libvirt_opts = [
+    cfg.StrOpt('version_cap',
+               default='1.2.2',  # Must always match the version in the gate
+               help='Limit use of features from newer libvirt versions. '
+                    'Defaults to the version that is used for automated '
+                    'testing of OpenStack.'),
     cfg.StrOpt('rescue_image_id',
                help='Rescue ami image. This will not be used if an image id '
                     'is provided by the user.'),
@@ -413,6 +418,14 @@ class LibvirtDriver(driver.ComputeDriver):
         try:
             if lv_ver is not None:
                 libvirt_version = conn.getLibVersion()
+
+                if CONF.libvirt.version_cap:
+                    libvirt_version_cap = utils.convert_version_to_int(
+                        utils.convert_version_to_tuple(
+                            CONF.libvirt.version_cap))
+                    if libvirt_version > libvirt_version_cap:
+                        libvirt_version = libvirt_version_cap
+
                 if libvirt_version < utils.convert_version_to_int(lv_ver):
                     return False
 
@@ -967,10 +980,10 @@ class LibvirtDriver(driver.ComputeDriver):
             self._destroy(instance)
 
     def destroy(self, context, instance, network_info, block_device_info=None,
-                destroy_disks=True):
+                destroy_disks=True, migrate_data=None):
         self._destroy(instance)
         self.cleanup(context, instance, network_info, block_device_info,
-                     destroy_disks)
+                     destroy_disks, migrate_data)
 
     def _undefine_domain(self, instance):
         try:
@@ -1004,7 +1017,7 @@ class LibvirtDriver(driver.ComputeDriver):
                               {'errcode': errcode, 'e': e}, instance=instance)
 
     def cleanup(self, context, instance, network_info, block_device_info=None,
-                destroy_disks=True):
+                destroy_disks=True, migrate_data=None):
         self._undefine_domain(instance)
         self._unplug_vifs(instance, network_info, True)
         retry = True
@@ -1077,9 +1090,12 @@ class LibvirtDriver(driver.ComputeDriver):
                                  {'vol_id': vol.get('volume_id'), 'exc': exc},
                                  instance=instance)
 
-        if destroy_disks:
+        if destroy_disks or (
+                migrate_data and migrate_data.get('is_shared_block_storage',
+                                                  False)):
             self._delete_instance_files(instance)
 
+        if destroy_disks:
             self._cleanup_lvm(instance)
             #NOTE(haomai): destroy volumes if needed
             if CONF.libvirt.images_type == 'rbd':
@@ -3353,12 +3369,11 @@ class LibvirtDriver(driver.ComputeDriver):
             guest.add_device(consolelog)
 
             consolepty = vconfig.LibvirtConfigGuestSerial()
-            consolepty.type = "pty"
-            guest.add_device(consolepty)
         else:
             consolepty = vconfig.LibvirtConfigGuestConsole()
-            consolepty.type = "pty"
-            guest.add_device(consolepty)
+
+        consolepty.type = "pty"
+        guest.add_device(consolepty)
 
         # We want a tablet if VNC is enabled,
         # or SPICE is enabled and the SPICE agent is disabled
@@ -3888,7 +3903,7 @@ class LibvirtDriver(driver.ComputeDriver):
             else:
                 if vcpus is not None and len(vcpus) > 1:
                     total += len(vcpus[1])
-            # NOTE(gtt116): give change to do other task.
+            # NOTE(gtt116): give other tasks a chance.
             greenthread.sleep(0)
         return total
 
@@ -4278,6 +4293,7 @@ class LibvirtDriver(driver.ComputeDriver):
         filename = self._create_shared_storage_test_file()
 
         return {"filename": filename,
+                "image_type": CONF.libvirt.images_type,
                 "block_migration": block_migration,
                 "disk_over_commit": disk_over_commit,
                 "disk_available_mb": disk_available_mb}
@@ -4306,16 +4322,15 @@ class LibvirtDriver(driver.ComputeDriver):
         # Checking shared storage connectivity
         # if block migration, instances_paths should not be on shared storage.
         source = CONF.host
-        filename = dest_check_data["filename"]
-        block_migration = dest_check_data["block_migration"]
-        is_volume_backed = dest_check_data.get('is_volume_backed', False)
-        has_local_disks = bool(
-            jsonutils.loads(self.get_instance_disk_info(instance['name'])))
 
-        shared = self._check_shared_storage_test_file(filename)
+        dest_check_data.update({'is_shared_block_storage':
+                self._is_shared_block_storage(instance, dest_check_data)})
+        dest_check_data.update({'is_shared_instance_path':
+                self._is_shared_instance_path(dest_check_data)})
 
-        if block_migration:
-            if shared:
+        if dest_check_data['block_migration']:
+            if (dest_check_data['is_shared_block_storage'] or
+                    dest_check_data['is_shared_instance_path']):
                 reason = _("Block migration can not be used "
                            "with shared storage.")
                 raise exception.InvalidLocalStorage(reason=reason, path=source)
@@ -4323,11 +4338,11 @@ class LibvirtDriver(driver.ComputeDriver):
                                     dest_check_data['disk_available_mb'],
                                     dest_check_data['disk_over_commit'])
 
-        elif not shared and (not is_volume_backed or has_local_disks):
+        elif not (dest_check_data['is_shared_block_storage'] or
+                  dest_check_data['is_shared_instance_path']):
             reason = _("Live migration can not be used "
                        "without shared storage.")
             raise exception.InvalidSharedStorage(reason=reason, path=source)
-        dest_check_data.update({"is_shared_storage": shared})
 
         # NOTE(mikal): include the instance directory name here because it
         # doesn't yet exist on the destination but we want to force that
@@ -4337,6 +4352,33 @@ class LibvirtDriver(driver.ComputeDriver):
         dest_check_data['instance_relative_path'] = instance_path
 
         return dest_check_data
+
+    def _is_shared_block_storage(self, instance, dest_check_data):
+        """Check if all block storage of an instance can be shared
+        between source and destination of a live migration.
+
+        Returns true if the instance is volume backed and has no local disks,
+        or if the image backend is the same on source and destination and the
+        backend shares block storage between compute nodes.
+        """
+        if (CONF.libvirt.images_type == dest_check_data.get('image_type') and
+                self.image_backend.backend().is_shared_block_storage()):
+            return True
+
+        if (dest_check_data.get('is_volume_backed') and
+                not bool(jsonutils.loads(
+                    self.get_instance_disk_info(instance['name'])))):
+            # pylint: disable E1120
+            return True
+
+        return False
+
+    def _is_shared_instance_path(self, dest_check_data):
+        """Check if instance path is shared between source and
+        destination of a live migration.
+        """
+        return self._check_shared_storage_test_file(
+                    dest_check_data["filename"])
 
     def _assert_dest_node_has_enough_disk(self, context, instance,
                                              available_mb, disk_over_commit):
@@ -4505,6 +4547,64 @@ class LibvirtDriver(driver.ComputeDriver):
                           post_method, recover_method, block_migration,
                           migrate_data)
 
+    def _correct_listen_addr(self, old_xml_str, listen_addrs):
+        # NB(sross): can't just use LibvirtConfigGuest#parse_str
+        #            here b/c it doesn't capture the entire XML
+        #            description
+        xml_doc = etree.fromstring(old_xml_str)
+
+        # change over listen addresses
+        for dev in xml_doc.findall('./devices/graphics'):
+            gr_type = dev.get('type')
+            listen_tag = dev.find('listen')
+            if gr_type in ('vnc', 'spice'):
+                if listen_tag is not None:
+                    listen_tag.set('address', listen_addrs[gr_type])
+                if dev.get('listen') is not None:
+                    dev.set('listen', listen_addrs[gr_type])
+
+        return etree.tostring(xml_doc)
+
+    def _check_graphics_addresses_can_live_migrate(self, listen_addrs):
+        LOCAL_ADDRS = ('0.0.0.0', '127.0.0.1', '::', '::1')
+
+        local_vnc = CONF.vncserver_listen in LOCAL_ADDRS
+        local_spice = CONF.spice.server_listen in LOCAL_ADDRS
+
+        if ((CONF.vnc_enabled and not local_vnc) or
+            (CONF.spice.enabled and not local_spice)):
+
+            raise exception.MigrationError(
+                    _('Your libvirt version does not support the'
+                      ' VIR_DOMAIN_XML_MIGRATABLE flag or your'
+                      ' destination node does not support'
+                      ' retrieving listen addresses.  In order'
+                      ' for live migration to work properly, you'
+                      ' must configure the graphics (VNC and/or'
+                      ' SPICE) listen addresses to be either'
+                      ' the catch-all address (0.0.0.0 or ::) or'
+                      ' the local address (127.0.0.1 or ::1).'))
+
+        if listen_addrs is not None:
+            dest_local_vnc = listen_addrs['vnc'] in LOCAL_ADDRS
+            dest_local_spice = listen_addrs['spice'] in LOCAL_ADDRS
+
+            if ((CONF.vnc_enabled and not dest_local_vnc) or
+                (CONF.spice.enabled and not dest_local_spice)):
+
+                LOG.warn(_('Your libvirt version does not support the'
+                           ' VIR_DOMAIN_XML_MIGRATABLE flag, and the '
+                           ' graphics (VNC and/or SPICE) listen'
+                           ' addresses on the destination node do not'
+                           ' match the addresses on the source node.'
+                           ' Since the source node has listen'
+                           ' addresses set to either the catch-all'
+                           ' address (0.0.0.0 or ::) or the local'
+                           ' address (127.0.0.1 or ::1), the live'
+                           ' migration will succeed, but the VM will'
+                           ' continue to listen on the current'
+                           ' addresses.'))
+
     def _live_migration(self, context, instance, dest, post_method,
                         recover_method, block_migration=False,
                         migrate_data=None):
@@ -4535,10 +4635,31 @@ class LibvirtDriver(driver.ComputeDriver):
             logical_sum = reduce(lambda x, y: x | y, flagvals)
 
             dom = self._lookup_by_name(instance["name"])
-            dom.migrateToURI(CONF.libvirt.live_migration_uri % dest,
-                             logical_sum,
-                             None,
-                             CONF.libvirt.live_migration_bandwidth)
+
+            pre_live_migrate_data = (migrate_data or {}).get(
+                                        'pre_live_migration_result', {})
+            listen_addrs = pre_live_migrate_data.get('graphics_listen_addrs')
+
+            migratable_flag = getattr(libvirt, 'VIR_DOMAIN_XML_MIGRATABLE',
+                                      None)
+
+            if migratable_flag is None or listen_addrs is None:
+                self._check_graphics_addresses_can_live_migrate(listen_addrs)
+                dom.migrateToURI(CONF.libvirt.live_migration_uri % dest,
+                                 logical_sum,
+                                 None,
+                                 CONF.libvirt.live_migration_bandwidth)
+            else:
+                old_xml_str = dom.XMLDesc(migratable_flag)
+                new_xml_str = self._correct_listen_addr(old_xml_str,
+                                                        listen_addrs)
+
+                dom.migrateToURI2(CONF.libvirt.live_migration_uri % dest,
+                                  None,
+                                  new_xml_str,
+                                  logical_sum,
+                                  None,
+                                  CONF.libvirt.live_migration_bandwidth)
 
         except Exception as e:
             with excutils.save_and_reraise_exception():
@@ -4580,31 +4701,37 @@ class LibvirtDriver(driver.ComputeDriver):
 
     def rollback_live_migration_at_destination(self, context, instance,
                                                network_info,
-                                               block_device_info):
+                                               block_device_info,
+                                               destroy_disks=True,
+                                               migrate_data=None):
         """Clean up destination node after a failed live migration."""
-        self.destroy(context, instance, network_info, block_device_info)
+        self.destroy(context, instance, network_info, block_device_info,
+                     destroy_disks, migrate_data)
 
     def pre_live_migration(self, context, instance, block_device_info,
                            network_info, disk_info, migrate_data=None):
         """Preparation live migration."""
         # Steps for volume backed instance live migration w/o shared storage.
-        is_shared_storage = True
-        is_volume_backed = False
+        is_shared_block_storage = True
+        is_shared_instance_path = True
         is_block_migration = True
         instance_relative_path = None
         if migrate_data:
-            is_shared_storage = migrate_data.get('is_shared_storage', True)
-            is_volume_backed = migrate_data.get('is_volume_backed', False)
+            is_shared_block_storage = migrate_data.get(
+                    'is_shared_block_storage', True)
+            is_shared_instance_path = migrate_data.get(
+                    'is_shared_instance_path', True)
             is_block_migration = migrate_data.get('block_migration', True)
             instance_relative_path = migrate_data.get('instance_relative_path')
 
-        if not is_shared_storage:
-            # NOTE(mikal): block migration of instances using config drive is
+        if not (is_shared_instance_path and is_shared_block_storage):
+            # NOTE(mikal): live migration of instances using config drive is
             # not supported because of a bug in libvirt (read only devices
             # are not copied by libvirt). See bug/1246201
             if configdrive.required_by(instance):
-                raise exception.NoBlockMigrationForConfigDriveInLibVirt()
+                raise exception.NoLiveMigrationForConfigDriveInLibVirt()
 
+        if not is_shared_instance_path:
             # NOTE(mikal): this doesn't use libvirt_utils.get_instance_path
             # because we are ensuring that the same instance directory name
             # is used as was at the source
@@ -4618,11 +4745,16 @@ class LibvirtDriver(driver.ComputeDriver):
                 raise exception.DestinationDiskExists(path=instance_dir)
             os.mkdir(instance_dir)
 
+        if not is_shared_block_storage:
             # Ensure images and backing files are present.
             self._create_images_and_backing(context, instance,
                                             instance_dir, disk_info)
 
-        if is_volume_backed and not (is_block_migration or is_shared_storage):
+        if not (is_block_migration or is_shared_instance_path):
+            # NOTE(angdraug): when block storage is shared between source and
+            # destination and instance path isn't (e.g. volume backed or rbd
+            # backed instance), instance path on destination has to be prepared
+
             # Touch the console.log file, required by libvirt.
             console_file = self._get_console_log_path(instance)
             libvirt_utils.file_open(console_file, 'a').close()
@@ -4659,6 +4791,12 @@ class LibvirtDriver(driver.ComputeDriver):
                               'max_retry': max_retry},
                              instance=instance)
                     greenthread.sleep(1)
+
+        res_data = {'graphics_listen_addrs': {}}
+        res_data['graphics_listen_addrs']['vnc'] = CONF.vncserver_listen
+        res_data['graphics_listen_addrs']['spice'] = CONF.spice.server_listen
+
+        return res_data
 
     def _create_images_and_backing(self, context, instance, instance_dir,
                                    disk_info_json):
@@ -4865,7 +5003,7 @@ class LibvirtDriver(driver.ComputeDriver):
             except exception.InstanceNotFound:
                 # Instance was deleted during the check so ignore it
                 pass
-            # NOTE(gtt116): give change to do other task.
+            # NOTE(gtt116): give other tasks a chance.
             greenthread.sleep(0)
         return disk_over_committed_size
 

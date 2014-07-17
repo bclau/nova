@@ -1672,6 +1672,7 @@ def _instance_data_get_for_user(context, project_id, user_id, session=None):
 
 
 @require_context
+@_retry_on_deadlock
 def instance_destroy(context, instance_uuid, constraint=None):
     session = get_session()
     with session.begin():
@@ -4540,7 +4541,8 @@ def flavor_extra_specs_update_or_create(context, flavor_id, specs,
             # a concurrent transaction has been committed,
             # try again unless this was the last attempt
             if attempt == max_retries - 1:
-                raise
+                raise exception.FlavorExtraSpecUpdateCreateFailed(
+                                    id=flavor_id, retries=max_retries)
 
 
 ####################

@@ -27,8 +27,7 @@ from oslo.config import cfg
 import six
 
 from nova import exception
-from nova.objects import fixed_ip as fixed_ip_obj
-from nova.objects import virtual_interface as vif_obj
+from nova import objects
 from nova.openstack.common import excutils
 from nova.openstack.common import fileutils
 from nova.openstack.common.gettextutils import _
@@ -273,7 +272,9 @@ class IptablesTable(object):
 
         rule_obj = IptablesRule(chain, rule, wrap, top)
         if rule_obj in self.rules:
-            LOG.debug("Skipping duplicate iptables rule addition")
+            LOG.debug("Skipping duplicate iptables rule addition. "
+                      "%(rule)r already in %(rules)r",
+                      {'rule': rule_obj, 'rules': self.rules})
         else:
             self.rules.append(IptablesRule(chain, rule, wrap, top))
             self.dirty = True
@@ -885,9 +886,9 @@ def get_dhcp_leases(context, network_ref):
     host = None
     if network_ref['multi_host']:
         host = CONF.host
-    for fixedip in fixed_ip_obj.FixedIPList.get_by_network(context,
-                                                           network_ref,
-                                                           host=host):
+    for fixedip in objects.FixedIPList.get_by_network(context,
+                                                      network_ref,
+                                                      host=host):
         # NOTE(cfb): Don't return a lease entry if the IP isn't
         #            already leased
         if fixedip.leased:
@@ -903,9 +904,9 @@ def get_dhcp_hosts(context, network_ref):
     if network_ref['multi_host']:
         host = CONF.host
     macs = set()
-    for fixedip in fixed_ip_obj.FixedIPList.get_by_network(context,
-                                                           network_ref,
-                                                           host=host):
+    for fixedip in objects.FixedIPList.get_by_network(context,
+                                                      network_ref,
+                                                      host=host):
         if fixedip.allocated:
             if fixedip.virtual_interface.address not in macs:
                 hosts.append(_host_dhcp(fixedip))
@@ -916,8 +917,7 @@ def get_dhcp_hosts(context, network_ref):
 def get_dns_hosts(context, network_ref):
     """Get network's DNS hosts in hosts format."""
     hosts = []
-    for fixedip in fixed_ip_obj.FixedIPList.get_by_network(context,
-                                                           network_ref):
+    for fixedip in objects.FixedIPList.get_by_network(context, network_ref):
         if fixedip.allocated:
             hosts.append(_host_dns(fixedip))
     return '\n'.join(hosts)
@@ -950,8 +950,6 @@ def _remove_dnsmasq_accept_rules(dev):
 # NOTE(russellb) Curious why this is needed?  Check out this explanation from
 # markmc: https://bugzilla.redhat.com/show_bug.cgi?id=910619#c6
 def _add_dhcp_mangle_rule(dev):
-    if not os.path.exists('/dev/vhost-net'):
-        return
     table = iptables_manager.ipv4['mangle']
     table.add_rule('POSTROUTING',
                    '-o %s -p udp -m udp --dport 68 -j CHECKSUM '
@@ -973,14 +971,14 @@ def get_dhcp_opts(context, network_ref):
     host = None
     if network_ref['multi_host']:
         host = CONF.host
-    fixedips = fixed_ip_obj.FixedIPList.get_by_network(context, network_ref,
-                                                       host=host)
+    fixedips = objects.FixedIPList.get_by_network(context, network_ref,
+                                                  host=host)
     if fixedips:
         instance_set = set([fixedip.instance_uuid for fixedip in fixedips])
         default_gw_vif = {}
         for instance_uuid in instance_set:
-            vifs = vif_obj.VirtualInterfaceList.get_by_instance_uuid(context,
-                    instance_uuid)
+            vifs = objects.VirtualInterfaceList.get_by_instance_uuid(
+                    context, instance_uuid)
             if vifs:
                 #offer a default gateway to the first virtual interface
                 default_gw_vif[instance_uuid] = vifs[0].id
