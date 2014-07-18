@@ -39,6 +39,7 @@ from eventlet import greenthread
 import eventlet.timeout
 from oslo.config import cfg
 from oslo import messaging
+import six
 
 from nova import block_device
 from nova.cells import rpcapi as cells_rpcapi
@@ -1910,9 +1911,10 @@ class ComputeManager(manager.Manager):
                     self._set_instance_error_state(context, instance.uuid)
                     return
                 retry['exc'] = traceback.format_exception(*sys.exc_info())
-                # dhcp_options are per host, so if they're set we need to
-                # deallocate the networks and reallocate on the next host.
-                if self.driver.dhcp_options_for_instance(instance):
+                # The MAC address for this instance is tied to the host so if
+                # we're going to reschedule we have to free the network details
+                # and reallocate on the next host.
+                if self.driver.macs_for_instance(instance):
                     self._cleanup_allocated_networks(context, instance,
                             requested_networks)
 
@@ -2251,13 +2253,22 @@ class ComputeManager(manager.Manager):
             self._notify_about_instance_usage(context, instance,
                                               "shutdown.end")
 
-    def _cleanup_volumes(self, context, instance_uuid, bdms):
+    def _cleanup_volumes(self, context, instance_uuid, bdms, raise_exc=True):
+        exc_info = None
+
         for bdm in bdms:
             LOG.debug("terminating bdm %s", bdm,
                       instance_uuid=instance_uuid)
             if bdm.volume_id and bdm.delete_on_termination:
-                self.volume_api.delete(context, bdm.volume_id)
-            # NOTE(vish): bdms will be deleted on instance destroy
+                try:
+                    self.volume_api.delete(context, bdm.volume_id)
+                except Exception as exc:
+                    exc_info = sys.exc_info()
+                    LOG.warn(_LW('Failed to delete volume: %(volume_id)s due '
+                                 'to %(exc)s'), {'volume_id': bdm.volume_id,
+                                                  'exc': unicode(exc)})
+        if exc_info is not None and raise_exc:
+            six.reraise(exc_info[0], exc_info[1], exc_info[2])
 
     @hooks.add_hook("delete_instance")
     def _delete_instance(self, context, instance, bdms, quotas):
@@ -2294,11 +2305,8 @@ class ComputeManager(manager.Manager):
             #             future to set an instance fault the first time
             #             and to only ignore the failure if the instance
             #             is already in ERROR.
-            try:
-                self._cleanup_volumes(context, instance_uuid, bdms)
-            except Exception as exc:
-                err_str = _("Ignoring volume cleanup failure due to %s")
-                LOG.warn(err_str % exc, instance=instance)
+            self._cleanup_volumes(context, instance_uuid, bdms,
+                    raise_exc=False)
             # if a delete task succeed, always update vm state and task
             # state without expecting task state to be DELETING
             instance.vm_state = vm_states.DELETED
