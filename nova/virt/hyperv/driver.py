@@ -111,7 +111,7 @@ class HyperVDriver(driver.ComputeDriver):
 
     def power_off(self, instance, timeout=0, retry_interval=0):
         # TODO(PhilDay): Add support for timeout (clean shutdown)
-        self._vmops.power_off(instance)
+        self._vmops.power_off(instance, timeout)
 
     def power_on(self, context, instance, network_info,
                  block_device_info=None):

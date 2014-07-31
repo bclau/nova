@@ -18,6 +18,9 @@ Management class for migration / resize operations.
 """
 import os
 
+from oslo.config import cfg
+
+from nova.compute import utils as compute_utils
 from nova import exception
 from nova.i18n import _
 from nova.openstack.common import excutils
@@ -31,6 +34,9 @@ from nova.virt.hyperv import vmutils
 from nova.virt.hyperv import volumeops
 
 LOG = logging.getLogger(__name__)
+
+CONF = cfg.CONF
+CONF.import_opt('shutdown_timeout', 'nova.compute.manager')
 
 
 class MigrationOps(object):
@@ -118,7 +124,10 @@ class MigrationOps(object):
 
         self._check_target_flavor(instance, flavor)
 
-        self._vmops.power_off(instance)
+        timeout = compute_utils.get_value_from_system_metadata(instance,
+            'image_shutdown_timeout', int, CONF.shutdown_timeout)
+
+        self._vmops.power_off(instance, timeout)
 
         instance_name = instance["name"]
 

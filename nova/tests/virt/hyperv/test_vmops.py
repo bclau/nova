@@ -111,6 +111,33 @@ class VMOpsTestCase(test.NoDBTestCase):
         mock_shutdown_vm.assert_called_once_with(instance.name)
         self.assertFalse(result)
 
+    def _test_power_off(self, timeout):
+        instance = fake_instance.fake_instance_obj(self.context)
+        with mock.patch.object(self._vmops, '_set_vm_state') as mock_set_state:
+            self._vmops.power_off(instance, timeout)
+
+            mock_set_state.assert_called_once_with(
+                instance.name, constants.HYPERV_VM_STATE_DISABLED)
+
+    def test_power_off_hard(self):
+        self._test_power_off(timeout=0)
+
+    @mock.patch("nova.virt.hyperv.vmops.VMOps._soft_shutdown")
+    def test_power_off_exception(self, mock_soft_shutdown):
+        mock_soft_shutdown.return_value = False
+        self._test_power_off(timeout=1)
+
+    @mock.patch("nova.virt.hyperv.vmops.VMOps._set_vm_state")
+    @mock.patch("nova.virt.hyperv.vmops.VMOps._soft_shutdown")
+    def test_power_off_soft(self, mock_soft_shutdown, mock_set_state):
+        instance = fake_instance.fake_instance_obj(self.context)
+        mock_soft_shutdown.return_value = True
+
+        self._vmops.power_off(instance, 1)
+
+        mock_soft_shutdown.assert_called_once_with(instance, 1)
+        self.assertFalse(mock_set_state.called)
+
     def test_get_vm_state(self):
         summary_info = {'EnabledState': constants.HYPERV_VM_STATE_DISABLED}
 

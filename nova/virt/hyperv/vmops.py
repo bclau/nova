@@ -461,9 +461,14 @@ class VMOps(object):
         self._set_vm_state(instance["name"],
                            constants.HYPERV_VM_STATE_ENABLED)
 
-    def power_off(self, instance):
+    def power_off(self, instance, timeout=0):
         """Power off the specified instance."""
         LOG.debug("Power off instance", instance=instance)
+        if timeout and self._soft_shutdown(instance, timeout):
+            return
+
+        LOG.warning(_LW("Performing hard shutdown on instance"),
+                    instance=instance)
         self._set_vm_state(instance["name"],
                            constants.HYPERV_VM_STATE_DISABLED)
 
