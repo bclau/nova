@@ -115,3 +115,53 @@ class VMUtilsTestCase(test.NoDBTestCase):
         mock_rasd2.HostResource = [self._FAKE_VOLUME_DRIVE_PATH]
 
         return [mock_rasd1, mock_rasd2]
+
+
+class WMIObjectWrapperTestCase(test.NoDBTestCase):
+    """Unit tests for the _wmi_object_wrapper class."""
+
+    FAKE_VALUE = "fake_value"
+
+    def setUp(self):
+        super(WMIObjectWrapperTestCase, self).setUp()
+        self.obj = mock.Mock()
+        self.wrapped_obj = vmutils._wmi_object_wrapper(self.obj)
+
+    def test_identity(self):
+        self.obj.__eq__ = mock.Mock(return_value=True)
+        self.assertEqual(self.wrapped_obj, self.obj)
+        self.assertEqual(self.obj.__doc__, self.wrapped_obj.__doc__)
+        self.assertEqual(self.obj.__module__, self.wrapped_obj.__module__)
+
+    def test_getattr_wmi_prop(self):
+        self.assertEqual(self.obj.fake_prop, self.wrapped_obj.fake_prop)
+
+    def test_getattr_wrapper_prop(self):
+        self.assertEqual(self.obj, self.wrapped_obj._wmi_object)
+
+    def test_setattr(self):
+        self.wrapped_obj.fake_prop = self.FAKE_VALUE
+        self.assertEqual(self.FAKE_VALUE, self.obj.fake_prop)
+
+    @mock.patch.object(vmutils, "wmi")
+    def test_setattr_wmi_exception(self, mock_wmi):
+        class x_wmi(Exception):
+            pass
+
+        mock_wmi.x_wmi = x_wmi
+
+        mock_wmi_property = self.obj.wmi_property
+
+        # cannot mock a mock's __setattr__. So, create a normal object and wrap
+        # it, then override the object's __setattr__.
+        dummy = type("DummyObject", (object, ),
+                     dict(wmi_property=mock_wmi_property))
+
+        dummy.__setattr__ = mock.MagicMock(side_effect=x_wmi)
+        wrapped_obj = vmutils._wmi_object_wrapper(dummy)
+
+        wrapped_obj.fake_prop = self.FAKE_VALUE
+
+        mock_wmi_property.assert_called_once_with("fake_prop")
+        mock_wmi_property.return_value.set.assert_called_once_with(
+            self.FAKE_VALUE)

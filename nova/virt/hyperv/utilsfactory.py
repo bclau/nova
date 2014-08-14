@@ -58,6 +58,12 @@ def _get_class(v1_class, v2_class, force_v1_flag):
 
 
 def get_vmutils(host='.'):
+    # V2 classes are not supported on earlier versions than
+    # Windows / Hyper-V Server 2012 (kernel version 6.2)
+    # On Windows / Hyper-V Server 2008 (kernel version 6.1) created wmi objects
+    # must be treated differently than on newer versions.
+    if not get_hostutils().check_min_windows_version(6, 2):
+        return vmutils.VMUtils2008(host)
     return _get_class(vmutils.VMUtils, vmutilsv2.VMUtilsV2,
                       CONF.hyperv.force_hyperv_utils_v1)(host)
 

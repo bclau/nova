@@ -576,3 +576,60 @@ class VMUtils(object):
     def enable_vm_metrics_collection(self, vm_name):
         raise NotImplementedError(_("Metrics collection is not supported on "
                                     "this version of Hyper-V"))
+
+
+class VMUtils2008(VMUtils):
+    def _get_new_setting_data(self, class_name):
+        wmi_obj = super(VMUtils2008, self)._get_new_setting_data(class_name)
+        return _wmi_object_wrapper(wmi_obj)
+
+    def _get_new_resource_setting_data(self, resource_sub_type,
+                                       class_name=None):
+        wmi_obj = super(VMUtils2008, self)._get_new_resource_setting_data(
+            resource_sub_type, class_name)
+
+        return _wmi_object_wrapper(wmi_obj)
+
+
+# Helper class that wraps a wmi object.
+# This class is meant to fix the issue with Windows / Hyper-V Server 2008
+# regarding default NULL values, since the default wmi object's __setattr__
+# generates exceptions in this case.
+class _wmi_object_wrapper(object):
+    def __init__(self, wmi_object):
+        super(_wmi_object_wrapper, self).__init__()
+        super(_wmi_object_wrapper,
+              self).__setattr__("_wmi_object", wmi_object)
+
+        # some properties must be overriden in the wrapper.
+        for prop in ["__doc__", "__module__"]:
+            super(_wmi_object_wrapper,
+                  self).__setattr__(prop, getattr(wmi_object, prop))
+
+    def __setattr__(self, attribute, value):
+        try:
+            # Allow default behaviour first.
+            self._wmi_object.__setattr__(attribute, value)
+            print "test"
+        except wmi.x_wmi:
+            # COM Error occured while setting the attribute.
+            # Setting value via wmi object's wmi_property.
+            try:
+                # don't have to check if the _wmi_object has that attribute.
+                # default __setattr__ raises AttributeError if doesn't have it.
+                self._wmi_object.wmi_property(attribute).set(value)
+            except wmi.pywintypes.com_error:
+                wmi.handle_com_error()
+
+    def __getattr__(self, attribute):
+        # any other behaviour must be the same.
+        if attribute != "_wmi_object":
+            return getattr(self._wmi_object, attribute)
+
+        return super(_wmi_object_wrapper, self).__getattr__(attribute)
+
+    def __repr__(self):
+        return self._wmi_object.__repr__()
+
+    def __str__(self):
+        return self._wmi_object.__str__()
