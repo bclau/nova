@@ -17,6 +17,7 @@
 """
 Management class for Storage-related functions (attach, detach, etc).
 """
+import collections
 import time
 
 from oslo.config import cfg
@@ -191,7 +192,14 @@ class VolumeOps(object):
                   mounted_disk_path)
         self._vmutils.detach_vm_disk(instance_name, mounted_disk_path)
 
-        self.logout_storage_target(target_iqn)
+        total_available_luns = self._volutils.get_target_lun_count(
+            target_iqn)
+
+        if total_available_luns == 1:
+            self.logout_storage_target(target_iqn)
+        else:
+            LOG.debug("Skipping disconnecting target %s as there "
+                      "are LUNs still being used.", target_iqn)
 
     def get_volume_connector(self, instance):
         if not self._initiator:
@@ -241,12 +249,28 @@ class VolumeOps(object):
                                        'for target_iqn: %s') % target_iqn)
         return mounted_disk_path
 
-    def disconnect_volume(self, physical_drive_path):
-        # Get the session_id of the ISCSI connection
-        session_id = self._volutils.get_session_id_from_mounted_disk(
-            physical_drive_path)
-        # Logging out the target
-        self._volutils.execute_log_out(session_id)
+    def disconnect_volumes(self, volume_drives):
+        targets = collections.defaultdict(int)
+        for volume_drive in volume_drives:
+            target = self._volutils.get_target_from_disk_path(
+                volume_drive)
+            if target:
+                target_iqn = target[0]
+                targets[target_iqn] += 1
+            else:
+                LOG.debug("Could not retrieve iSCSI target from disk path: ",
+                          volume_drive)
+
+        for target_iqn in targets:
+            # Disconnect the target only if we disconnect all the
+            # available LUNs.
+            total_available_luns = self._volutils.get_target_lun_count(
+                target_iqn)
+            if targets[target_iqn] == total_available_luns:
+                self.logout_storage_target(target_iqn)
+            else:
+                LOG.debug("Skipping disconnecting target %s as there "
+                          "are LUNs still being used." % target_iqn)
 
     def get_target_from_disk_path(self, physical_drive_path):
         return self._volutils.get_target_from_disk_path(physical_drive_path)
@@ -269,3 +293,6 @@ class VolumeOps(object):
             self._vmutils.set_disk_host_resource(
                 instance_name, ctrller_path, disk_address, mounted_disk_path)
             disk_address += 1
+
+    def get_target_lun_count(self, target_iqn):
+        return self._volutils.get_target_lun_count(target_iqn)
