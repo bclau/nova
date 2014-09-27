@@ -22,10 +22,10 @@ LOG = logging.getLogger(__name__)
 
 
 class RDPConsoleOps(object):
-    def __init__(self):
-        self._hostops = hostops.HostOps()
-        self._vmutils = utilsfactory.get_vmutils()
-        self._rdpconsoleutils = utilsfactory.get_rdpconsoleutils()
+    def __init__(self, host='.'):
+        self._hostops = hostops.HostOps(host)
+        self._vmutils = utilsfactory.get_vmutils(host)
+        self._rdpconsoleutils = utilsfactory.get_rdpconsoleutils(host)
 
     def get_rdp_console(self, instance):
         LOG.debug("get_rdp_console called", instance=instance)

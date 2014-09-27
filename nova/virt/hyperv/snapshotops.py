@@ -31,10 +31,10 @@ LOG = logging.getLogger(__name__)
 
 
 class SnapshotOps(object):
-    def __init__(self):
+    def __init__(self, host='.'):
         self._pathutils = utilsfactory.get_pathutils()
-        self._vmutils = utilsfactory.get_vmutils()
-        self._vhdutils = utilsfactory.get_vhdutils()
+        self._vmutils = utilsfactory.get_vmutils(host)
+        self._vhdutils = utilsfactory.get_vhdutils(host)
 
     def _save_glance_image(self, context, image_id, image_vhd_path):
         (glance_image_service,
