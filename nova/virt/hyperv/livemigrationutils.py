@@ -31,9 +31,9 @@ LOG = logging.getLogger(__name__)
 
 class LiveMigrationUtils(object):
 
-    def __init__(self):
-        self._vmutils = vmutilsv2.VMUtilsV2()
-        self._volutils = volumeutilsv2.VolumeUtilsV2()
+    def __init__(self, host='.'):
+        self._vmutils = vmutilsv2.VMUtilsV2(host)
+        self._volutils = volumeutilsv2.VolumeUtilsV2(host)
 
     def _get_conn_v2(self, host='localhost'):
         try:

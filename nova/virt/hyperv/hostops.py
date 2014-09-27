@@ -39,8 +39,8 @@ LOG = logging.getLogger(__name__)
 
 
 class HostOps(object):
-    def __init__(self):
-        self._hostutils = utilsfactory.get_hostutils()
+    def __init__(self, host='.'):
+        self._hostutils = utilsfactory.get_hostutils(host)
         self._pathutils = utilsfactory.get_pathutils()
 
     def _get_cpu_info(self):

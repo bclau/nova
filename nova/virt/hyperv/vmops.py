@@ -115,11 +115,11 @@ class VMOps(object):
     # the maximum console log size.
     _MAX_CONSOLE_LOG_FILE_SIZE = units.Mi / 2
 
-    def __init__(self):
-        self._vmutils = utilsfactory.get_vmutils()
-        self._vhdutils = utilsfactory.get_vhdutils()
+    def __init__(self, host='.'):
+        self._vmutils = utilsfactory.get_vmutils(host)
+        self._vhdutils = utilsfactory.get_vhdutils(host)
         self._pathutils = utilsfactory.get_pathutils()
-        self._volumeops = volumeops.VolumeOps()
+        self._volumeops = volumeops.VolumeOps(host)
         self._imagecache = imagecache.ImageCache()
         self._vif_driver = None
         self._load_vif_driver_class()
