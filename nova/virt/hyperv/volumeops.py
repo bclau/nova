@@ -61,9 +61,9 @@ class VolumeOps(object):
     """Management class for Volume-related tasks
     """
 
-    def __init__(self):
-        self._vmutils = utilsfactory.get_vmutils()
-        self._volutils = utilsfactory.get_volumeutils()
+    def __init__(self, host='.'):
+        self._vmutils = utilsfactory.get_vmutils(host)
+        self._volutils = utilsfactory.get_volumeutils(host)
         self._initiator = None
         self._default_root_device = 'vda'
         self.volume_drivers = {'smbfs': SMBFSVolumeDriver(),

@@ -26,7 +26,7 @@ class HostUtils(object):
     _HOST_FORCED_REBOOT = 6
     _HOST_FORCED_SHUTDOWN = 12
 
-    def __init__(self):
+    def __init__(self, host='.'):
         if sys.platform == 'win32':
             self._conn_cimv2 = wmi.WMI(privileges=["Shutdown"])
 
