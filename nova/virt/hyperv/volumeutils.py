@@ -41,8 +41,8 @@ CONF = cfg.CONF
 
 class VolumeUtils(basevolumeutils.BaseVolumeUtils):
 
-    def __init__(self):
-        super(VolumeUtils, self).__init__()
+    def __init__(self, host='.'):
+        super(VolumeUtils, self).__init__(host)
 
     def execute(self, *args, **kwargs):
         stdout_value, stderr_value = utils.execute(*args, **kwargs)

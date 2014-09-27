@@ -22,9 +22,9 @@ if sys.platform == 'win32':
 
 
 class HostUtils(object):
-    def __init__(self):
+    def __init__(self, host='.'):
         if sys.platform == 'win32':
-            self._conn_cimv2 = wmi.WMI(moniker='//./root/cimv2')
+            self._conn_cimv2 = wmi.WMI(moniker='//%s/root/cimv2' % host)
 
     def get_cpus_info(self):
         cpus = self._conn_cimv2.query("SELECT * FROM Win32_Processor "

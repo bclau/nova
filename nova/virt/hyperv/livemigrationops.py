@@ -45,16 +45,16 @@ def check_os_version_requirement(function):
 
 
 class LiveMigrationOps(object):
-    def __init__(self):
+    def __init__(self, host='.'):
         # Live migration is supported starting from Hyper-V Server 2012
         if utilsfactory.get_hostutils().check_min_windows_version(6, 2):
-            self._livemigrutils = utilsfactory.get_livemigrationutils()
+            self._livemigrutils = utilsfactory.get_livemigrationutils(host)
         else:
             self._livemigrutils = None
 
         self._pathutils = utilsfactory.get_pathutils()
-        self._vmops = vmops.VMOps()
-        self._volumeops = volumeops.VolumeOps()
+        self._vmops = vmops.VMOps(host)
+        self._volumeops = volumeops.VolumeOps(host)
         self._imagecache = imagecache.ImageCache()
 
     @check_os_version_requirement

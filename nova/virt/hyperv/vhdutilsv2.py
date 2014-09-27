@@ -53,10 +53,10 @@ class VHDUtilsV2(vhdutils.VHDUtils):
         constants.DISK_FORMAT_VHDX: 3,
     }
 
-    def __init__(self):
-        self._vmutils = vmutilsv2.VMUtilsV2()
+    def __init__(self, host='.'):
+        self._vmutils = vmutilsv2.VMUtilsV2(host)
         if sys.platform == 'win32':
-            self._conn = wmi.WMI(moniker='//./root/virtualization/v2')
+            self._conn = wmi.WMI(moniker='//%s/root/virtualization/v2' % host)
 
     def create_dynamic_vhd(self, path, max_internal_size, format):
         vhd_format = self._vhd_format_map.get(format)

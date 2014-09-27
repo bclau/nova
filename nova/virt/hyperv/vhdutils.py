@@ -49,10 +49,10 @@ VHDX_SIGNATURE = 'vhdxfile'
 
 class VHDUtils(object):
 
-    def __init__(self):
-        self._vmutils = vmutils.VMUtils()
+    def __init__(self, host='.'):
+        self._vmutils = vmutils.VMUtils(host)
         if sys.platform == 'win32':
-            self._conn = wmi.WMI(moniker='//./root/virtualization')
+            self._conn = wmi.WMI(moniker='//%s/root/virtualization' % host)
 
     def validate_vhd(self, vhd_path):
         image_man_svc = self._conn.Msvm_ImageManagementService()[0]

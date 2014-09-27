@@ -17,5 +17,8 @@
 class RDPConsoleUtils(object):
     _DEFAULT_HYPERV_RDP_PORT = 2179
 
+    def __init__(self, host='.'):
+        super(RDPConsoleUtils, self).__init__()
+
     def get_rdp_console_port(self):
         return self._DEFAULT_HYPERV_RDP_PORT

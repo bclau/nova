@@ -22,9 +22,9 @@ if sys.platform == 'win32':
 
 
 class RDPConsoleUtilsV2(rdpconsoleutils.RDPConsoleUtils):
-    def __init__(self):
+    def __init__(self, host='.'):
         if sys.platform == 'win32':
-            self._conn = wmi.WMI(moniker='//./root/virtualization/v2')
+            self._conn = wmi.WMI(moniker='//%s/root/virtualization/v2' % host)
 
     def get_rdp_console_port(self):
         rdp_setting_data = self._conn.Msvm_TerminalServiceSettingData()[0]

@@ -34,13 +34,13 @@ LOG = logging.getLogger(__name__)
 
 
 class MigrationOps(object):
-    def __init__(self):
-        self._hostutils = utilsfactory.get_hostutils()
-        self._vmutils = utilsfactory.get_vmutils()
-        self._vhdutils = utilsfactory.get_vhdutils()
+    def __init__(self, host='.'):
+        self._hostutils = utilsfactory.get_hostutils(host)
+        self._vmutils = utilsfactory.get_vmutils(host)
+        self._vhdutils = utilsfactory.get_vhdutils(host)
         self._pathutils = utilsfactory.get_pathutils()
-        self._volumeops = volumeops.VolumeOps()
-        self._vmops = vmops.VMOps()
+        self._volumeops = volumeops.VolumeOps(host)
+        self._vmops = vmops.VMOps(host)
         self._imagecache = imagecache.ImageCache()
 
     def _migrate_disk_files(self, instance_name, disk_files, dest):
