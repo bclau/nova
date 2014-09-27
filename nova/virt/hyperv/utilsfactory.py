@@ -75,16 +75,17 @@ def get_vmutils(host='.'):
     return _get_virt_utils_class(vmutils.VMUtils, vmutilsv2.VMUtilsV2)(host)
 
 
-def get_vhdutils():
-    return _get_virt_utils_class(vhdutils.VHDUtils, vhdutilsv2.VHDUtilsV2)()
+def get_vhdutils(host='.'):
+    return _get_virt_utils_class(vhdutils.VHDUtils, 
+                                 vhdutilsv2.VHDUtilsV2)(host)
 
 
-def get_networkutils():
+def get_networkutils(host='.'):
     return _get_virt_utils_class(networkutils.NetworkUtils,
-                           networkutilsv2.NetworkUtilsV2)()
+                                 networkutilsv2.NetworkUtilsV2)(host)
 
 
-def get_hostutils():
+def get_hostutils(host='.'):
     return hostutils.HostUtils()
 
 
@@ -92,15 +93,15 @@ def get_pathutils():
     return pathutils.PathUtils()
 
 
-def get_volumeutils():
+def get_volumeutils(host='.'):
     return _get_class(volumeutils.VolumeUtils, volumeutilsv2.VolumeUtilsV2,
-                      CONF.hyperv.force_volumeutils_v1)()
+                      CONF.hyperv.force_volumeutils_v1)(host)
 
 
-def get_livemigrationutils():
-    return livemigrationutils.LiveMigrationUtils()
+def get_livemigrationutils(host='.'):
+    return livemigrationutils.LiveMigrationUtils(host)
 
 
-def get_rdpconsoleutils():
+def get_rdpconsoleutils(host='.'):
     return _get_virt_utils_class(rdpconsoleutils.RDPConsoleUtils,
-                      rdpconsoleutilsv2.RDPConsoleUtilsV2)()
+                                 rdpconsoleutilsv2.RDPConsoleUtilsV2)(host)

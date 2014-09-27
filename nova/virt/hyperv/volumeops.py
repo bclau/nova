@@ -59,10 +59,10 @@ class VolumeOps(object):
     """Management class for Volume-related tasks
     """
 
-    def __init__(self):
-        self._hostutils = utilsfactory.get_hostutils()
-        self._vmutils = utilsfactory.get_vmutils()
-        self._volutils = utilsfactory.get_volumeutils()
+    def __init__(self, host='.'):
+        self._hostutils = utilsfactory.get_hostutils(host)
+        self._vmutils = utilsfactory.get_vmutils(host)
+        self._volutils = utilsfactory.get_volumeutils(host)
         self._initiator = None
         self._default_root_device = 'vda'
 

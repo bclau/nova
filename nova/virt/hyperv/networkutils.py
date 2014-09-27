@@ -28,9 +28,9 @@ from nova.virt.hyperv import vmutils
 
 
 class NetworkUtils(object):
-    def __init__(self):
+    def __init__(self, host='.'):
         if sys.platform == 'win32':
-            self._conn = wmi.WMI(moniker='//./root/virtualization')
+            self._conn = wmi.WMI(moniker='//%s/root/virtualization' % host)
 
     def get_external_vswitch(self, vswitch_name):
         if vswitch_name:
