@@ -17,6 +17,8 @@ from oslo.config import cfg
 
 from nova.i18n import _
 from nova.openstack.common import log as logging
+from nova.virt.hyperv.cluster import livemigrationutils as clust_migrationutils
+from nova.virt.hyperv.cluster import vmutilsv2 as clust_vmutilsv2
 from nova.virt.hyperv import hostutils
 from nova.virt.hyperv import livemigrationutils
 from nova.virt.hyperv import networkutils
@@ -38,6 +40,9 @@ hyper_opts = [
     cfg.BoolOpt('force_volumeutils_v1',
                 default=False,
                 help='Force V1 volume utility class'),
+    cfg.BoolOpt('clustered',
+                default=True,
+                help='Clustering stuff.'),
 ]
 
 CONF = cfg.CONF
@@ -72,11 +77,14 @@ def _get_virt_utils_class(v1_class, v2_class):
 
 
 def get_vmutils(host='.'):
+    if CONF.hyperv.clustered:
+        return _get_virt_utils_class(vmutils.VMUtils,
+                                     clust_vmutilsv2.ClusterVMUtilsV2)(host)
     return _get_virt_utils_class(vmutils.VMUtils, vmutilsv2.VMUtilsV2)(host)
 
 
 def get_vhdutils(host='.'):
-    return _get_virt_utils_class(vhdutils.VHDUtils, 
+    return _get_virt_utils_class(vhdutils.VHDUtils,
                                  vhdutilsv2.VHDUtilsV2)(host)
 
 
@@ -99,6 +107,8 @@ def get_volumeutils(host='.'):
 
 
 def get_livemigrationutils(host='.'):
+    if CONF.hyperv.clustered:
+        return clust_migrationutils.ClusterLiveMigrationUtils(host)
     return livemigrationutils.LiveMigrationUtils(host)
 
 
