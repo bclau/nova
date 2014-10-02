@@ -4522,6 +4522,12 @@ class ComputeManager(manager.Manager):
     def attach_volume(self, context, volume_id, mountpoint,
                       instance, bdm=None):
         """Attach a volume to an instance."""
+        import traceback
+        traceback.print_stack()
+        LOG.warning("Context: ")
+        for el in dir(context):
+            LOG.warning(el + str(getattr(context, el)))
+
         if not bdm:
             bdm = objects.BlockDeviceMapping.get_by_volume_id(
                     context, volume_id)

@@ -257,6 +257,8 @@ class VMOps(object):
         """Create a new VM and start it."""
         LOG.info(_("Spawning new instance"), instance=instance)
 
+        print "Vmops spawn block info: ", block_device_info
+
         instance_name = instance['name']
         if self._vmutils.vm_exists(instance_name):
             raise exception.InstanceExists(name=instance_name)

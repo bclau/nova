@@ -75,6 +75,7 @@ class VolumeOps(object):
                                                     block_device_info)
 
     def attach_volumes(self, block_device_info, instance_name, ebs_root):
+        print "Volops attach volumes: ", block_device_info
         mapping = driver.block_device_info_get_mapping(block_device_info)
 
         if ebs_root:
@@ -85,11 +86,13 @@ class VolumeOps(object):
             self.attach_volume(vol['connection_info'], instance_name)
 
     def login_storage_targets(self, block_device_info):
+        print "Volops login_storage_targets: ", block_device_info
         mapping = driver.block_device_info_get_mapping(block_device_info)
         for vol in mapping:
             self._login_storage_target(vol['connection_info'])
 
     def _login_storage_target(self, connection_info):
+        print "Volops _login_storage_target: ", connection_info
         data = connection_info['data']
         target_lun = data['target_lun']
         target_iqn = data['target_iqn']
@@ -116,6 +119,7 @@ class VolumeOps(object):
         """Attach a volume to the SCSI controller or to the IDE controller if
         ebs_root is True
         """
+        print "Volops attach_volume: ", connection_info
         target_iqn = None
         LOG.debug("Attach_volume: %(connection_info)s to %(instance_name)s",
                   {'connection_info': connection_info,
