@@ -616,7 +616,10 @@ class VMOps(object):
             vm_log_writer.join()
 
         for log_file in console_log_files:
-            fileutils.delete_if_exists(log_file)
+            try:
+                fileutils.delete_if_exists(log_file)
+            except Exception as e:
+                LOG.warning("Error while deleting log file : %s", log_file)
 
     def copy_vm_console_logs(self, vm_name, dest_host):
         local_log_paths = self._pathutils.get_vm_console_log_paths(
