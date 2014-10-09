@@ -22,9 +22,13 @@ if sys.platform == 'win32':
 
 
 class HostUtils(object):
+
+    _HOST_FORCED_REBOOT = 6
+    _HOST_FORCED_SHUTDOWN = 12
+
     def __init__(self):
         if sys.platform == 'win32':
-            self._conn_cimv2 = wmi.WMI(moniker='//./root/cimv2')
+            self._conn_cimv2 = wmi.WMI(privileges=["Shutdown"])
 
     def get_cpus_info(self):
         cpus = self._conn_cimv2.query("SELECT * FROM Win32_Processor "
@@ -78,3 +82,11 @@ class HostUtils(object):
 
     def get_host_tick_count64(self):
         return ctypes.windll.kernel32.GetTickCount64()
+
+    def host_power_action(self, action):
+        win32_os = self._conn_cimv2.Win32_OperatingSystem()[0]
+
+        if action == "shutdown":
+            win32_os.Win32Shutdown(self._HOST_FORCED_SHUTDOWN)
+        else:
+            win32_os.Win32Shutdown(self._HOST_FORCED_REBOOT)
