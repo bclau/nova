@@ -32,3 +32,25 @@ class HostUtilsTestCase(test.NoDBTestCase):
         mock_ctypes.windll.kernel32.GetTickCount64.return_value = tick_count64
         response = self._hostutils.get_host_tick_count64()
         self.assertEqual(tick_count64, response)
+
+    def _test_host_power_action(self, action):
+        fake_win32 = mock.MagicMock()
+        fake_win32.Win32Shutdown = mock.MagicMock()
+
+        self._hostutils._conn_cimv2.Win32_OperatingSystem.return_value = [
+            fake_win32]
+
+        self._hostutils.host_power_action(action)
+
+        if action == "shutdown":
+            fake_win32.Win32Shutdown.assert_called_with(
+                self._hostutils._HOST_FORCED_SHUTDOWN)
+        else:
+            fake_win32.Win32Shutdown.assert_called_with(
+                self._hostutils._HOST_FORCED_REBOOT)
+
+    def test_host_shutdown(self):
+        self._test_host_power_action(action="shutdown")
+
+    def test_host_reboot(self):
+        self._test_host_power_action(action="reboot")

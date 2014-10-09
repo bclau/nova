@@ -96,7 +96,7 @@ class HyperVDriver(driver.ComputeDriver):
         return [platform.node()]
 
     def host_power_action(self, host, action):
-        return self._hostops.host_power_action(host, action)
+        return self._hostops.host_power_action(action)
 
     def snapshot(self, context, instance, image_id, update_task_state):
         self._snapshotops.snapshot(context, instance, image_id,
