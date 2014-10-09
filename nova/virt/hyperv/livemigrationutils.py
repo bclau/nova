@@ -121,13 +121,13 @@ class LiveMigrationUtils(object):
         volutils_remote = volumeutilsv2.VolumeUtilsV2(dest_host)
 
         disk_paths_remote = {}
-        iscsi_targets = collections.defaultdict(list)
+        iscsi_targets = collections.defaultdict(int)
         for (rasd_rel_path, disk_path) in disk_paths.items():
             target = self._volutils.get_target_from_disk_path(disk_path)
             if target:
                 (target_iqn, target_lun) = target
 
-                iscsi_targets[target_iqn].append(target_lun)
+                iscsi_targets[target_iqn] += 1
 
                 dev_num = volutils_remote.get_device_number_for_target(
                     target_iqn, target_lun)

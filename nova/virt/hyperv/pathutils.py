@@ -15,6 +15,10 @@
 
 import os
 import shutil
+import sys
+
+if sys.platform == 'win32':
+    import wmi
 
 from oslo.config import cfg
 
@@ -22,6 +26,7 @@ from nova.i18n import _
 from nova.openstack.common import log as logging
 from nova import utils
 from nova.virt.hyperv import constants
+from nova.virt.hyperv import vmutils
 
 LOG = logging.getLogger(__name__)
 
@@ -41,6 +46,10 @@ CONF.import_opt('instances_path', 'nova.compute.manager')
 
 
 class PathUtils(object):
+    def __init__(self):
+        if sys.platform == 'win32':
+            self.smb_conn = wmi.WMI(moniker=r"root\Microsoft\Windows\SMB")
+
     def open(self, path, mode):
         """Wrapper on __builtin__.open used to simplify unit testing."""
         import __builtin__
@@ -171,3 +180,38 @@ class PathUtils(object):
                                              remote_server)
         console_log_path = os.path.join(instance_dir, 'console.log')
         return console_log_path, console_log_path + '.1'
+
+    def check_smb_mapping(self, smbfs_share):
+        mappings = self.smb_conn.query("SELECT * FROM "
+                                       "MSFT_SmbMapping "
+                                       "WHERE RemotePath='%s'" %
+                                       smbfs_share)
+
+        if len(mappings) > 0:
+            if os.path.exists(smbfs_share):
+                LOG.debug('Share already mounted: %s' % smbfs_share)
+                return True
+            else:
+                LOG.debug('Share exists but is unavailable: %s '
+                          % smbfs_share)
+                for mapping in mappings:
+                    # Due to a bug in the WMI module, getting the output of
+                    # methods returning None will raise an AttributeError
+                    try:
+                        mapping.Remove(True, True)
+                    except AttributeError:
+                        pass
+        return False
+
+    def mount_smb_share(self, smbfs_share, username=None, password=None):
+        try:
+            LOG.debug('Mounting share: %s' % smbfs_share)
+            self.smb_conn.Msft_SmbMapping.Create(RemotePath=smbfs_share,
+                                                 UserName=username,
+                                                 Password=password)
+        except wmi.x_wmi as exc:
+            err_msg = (_(
+                'Unable to mount SMBFS share: %(smbfs_share)s '
+                'WMI exception: %(wmi_exc)s'), {'smbfs_share': smbfs_share,
+                                                'wmi_exc': exc})
+            raise vmutils.HyperVException(err_msg)

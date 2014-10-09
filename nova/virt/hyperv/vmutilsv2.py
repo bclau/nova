@@ -117,13 +117,11 @@ class VMUtilsV2(vmutils.VMUtils):
         return [s for s in vmsettings if
                 s.VirtualSystemType == self._VIRTUAL_SYSTEM_TYPE_REALIZED][0]
 
-    def attach_ide_drive(self, vm_name, path, ctrller_addr, drive_addr,
-                         drive_type=constants.IDE_DISK):
+    def attach_drive(self, vm_name, path, ctrller_path, drive_addr,
+                     drive_type=constants.IDE_DISK):
         """Create an IDE drive and attach it to the vm."""
 
         vm = self._lookup_vm_check(vm_name)
-
-        ctrller_path = self._get_vm_ide_controller(vm, ctrller_addr)
 
         if drive_type == constants.IDE_DISK:
             res_sub_type = self._DISK_RES_SUB_TYPE

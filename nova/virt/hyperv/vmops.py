@@ -409,7 +409,8 @@ class VMOps(object):
                 (disk_files, volume_drives) = storage
 
                 self._vmutils.destroy_vm(instance_name)
-                self._volumeops.disconnect_volumes(volume_drives)
+                self._volumeops.volume_drivers['iscsi'].disconnect_volumes(
+                    volume_drives)
             else:
                 LOG.debug("Instance not found", instance=instance)
 

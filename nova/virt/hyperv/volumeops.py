@@ -18,16 +18,17 @@
 Management class for Storage-related functions (attach, detach, etc).
 """
 import collections
+import os
+import re
 import time
 
 from oslo.config import cfg
 from oslo.utils import excutils
 
 from nova import exception
-from nova.i18n import _, _LE
+from nova.i18n import _, _LW, _LE
 from nova.openstack.common import log as logging
 from nova.virt import driver
-from nova.virt.hyperv import constants
 from nova.virt.hyperv import utilsfactory
 from nova.virt.hyperv import vmutils
 
@@ -61,19 +62,18 @@ class VolumeOps(object):
     """
 
     def __init__(self):
-        self._hostutils = utilsfactory.get_hostutils()
         self._vmutils = utilsfactory.get_vmutils()
         self._volutils = utilsfactory.get_volumeutils()
         self._initiator = None
         self._default_root_device = 'vda'
+        self.volume_drivers = {'smbfs': SMBFSVolumeDriver(),
+                               'iscsi': ISCSIVolumeDriver()}
 
-    def ebs_root_in_block_devices(self, block_device_info):
-        if block_device_info:
-            root_device = block_device_info.get('root_device_name')
-            if not root_device:
-                root_device = self._default_root_device
-            return self._volutils.volume_in_mapping(root_device,
-                                                    block_device_info)
+    def _get_volume_driver(self, connection_info):
+        driver_type = connection_info.get('driver_volume_type')
+        if driver_type not in self.volume_drivers:
+            raise exception.VolumeDriverNotFound(driver_type=driver_type)
+        return self.volume_drivers[driver_type]
 
     def attach_volumes(self, block_device_info, instance_name, ebs_root):
         mapping = driver.block_device_info_get_mapping(block_device_info)
@@ -85,12 +85,65 @@ class VolumeOps(object):
         for vol in mapping:
             self.attach_volume(vol['connection_info'], instance_name)
 
-    def login_storage_targets(self, block_device_info):
+    def detach_volumes(self, block_device_info, instance_name):
         mapping = driver.block_device_info_get_mapping(block_device_info)
         for vol in mapping:
-            self._login_storage_target(vol['connection_info'])
+            self.detach_volume(vol['connection_info'], instance_name)
 
-    def _login_storage_target(self, connection_info):
+    def attach_volume(self, connection_info, instance_name, ebs_root=False):
+        volume_driver = self._get_volume_driver(connection_info)
+        volume_driver.attach_volume(connection_info, instance_name, ebs_root)
+
+    def detach_volume(self, connection_info, instance_name):
+        volume_driver = self._get_volume_driver(connection_info)
+        volume_driver.detach_volume(connection_info, instance_name)
+
+    def ebs_root_in_block_devices(self, block_device_info):
+        if block_device_info:
+            root_device = block_device_info.get('root_device_name')
+            if not root_device:
+                root_device = self._default_root_device
+            return self._volutils.volume_in_mapping(root_device,
+                                                    block_device_info)
+
+    def fix_instance_volume_disk_paths(self, instance_name, block_device_info):
+        mapping = driver.block_device_info_get_mapping(block_device_info)
+
+        if self.ebs_root_in_block_devices(block_device_info):
+            mapping = mapping[1:]
+
+        disk_address = 0
+        for vol in mapping:
+            volume_driver = self._get_volume_driver(vol['connection_info'])
+            volume_driver.fix_instance_volume_disk_path(
+                instance_name, vol['connection_info'], disk_address)
+            disk_address += 1
+
+    def get_volume_connector(self, instance):
+        if not self._initiator:
+            self._initiator = self._volutils.get_iscsi_initiator()
+            if not self._initiator:
+                LOG.warn(_LW('Could not determine iscsi initiator name'),
+                         instance=instance)
+        return {
+            'ip': CONF.my_ip,
+            'host': CONF.host,
+            'initiator': self._initiator,
+        }
+
+    def initialize_volumes_connection(self, block_device_info):
+        mapping = driver.block_device_info_get_mapping(block_device_info)
+        for vol in mapping:
+            volume_driver = self._get_volume_driver(vol['connection_info'])
+            volume_driver.initialize_volume_connection(vol['connection_info'])
+
+
+class ISCSIVolumeDriver(object):
+    def __init__(self):
+        self._vmutils = utilsfactory.get_vmutils()
+        self._volutils = utilsfactory.get_volumeutils()
+
+    def login_storage_target(self, connection_info):
         data = connection_info['data']
         target_lun = data['target_lun']
         target_iqn = data['target_iqn']
@@ -113,6 +166,29 @@ class VolumeOps(object):
             # Wait for the target to be mounted
             self._get_mounted_disk_from_lun(target_iqn, target_lun, True)
 
+    def logout_storage_targets(self, iscsi_targets):
+        """Disconnect the specified iSCSI targets only if there are no
+        other LUNs in use.
+
+        :param iscsi_targets: A dict containing iscsi target iqns and the
+                              number of LUNs that are no longer in use
+                              for each.
+        """
+        for target_iqn in iscsi_targets:
+            # Disconnect the target only if we disconnect all the
+            # available LUNs.
+            total_available_luns = self._volutils.get_target_lun_count(
+                target_iqn)
+            if iscsi_targets[target_iqn] == total_available_luns:
+                self.logout_storage_target(target_iqn)
+            else:
+                LOG.debug("Skipping disconnecting target %s as there "
+                          "are LUNs still being used." % target_iqn)
+
+    def logout_storage_target(self, target_iqn):
+        LOG.debug("Logging off storage target %s", target_iqn)
+        self._volutils.logout_storage_target(target_iqn)
+
     def attach_volume(self, connection_info, instance_name, ebs_root=False):
         """Attach a volume to the SCSI controller or to the IDE controller if
         ebs_root is True
@@ -122,7 +198,7 @@ class VolumeOps(object):
                   {'connection_info': connection_info,
                    'instance_name': instance_name})
         try:
-            self._login_storage_target(connection_info)
+            self.login_storage_target(connection_info)
 
             data = connection_info['data']
             target_lun = data['target_lun']
@@ -142,7 +218,7 @@ class VolumeOps(object):
                 # Find the SCSI controller for the vm
                 ctrller_path = self._vmutils.get_vm_scsi_controller(
                     instance_name)
-                slot = self._get_free_controller_slot(ctrller_path)
+                slot = self._vmutils.get_free_controller_slot(ctrller_path)
 
             self._vmutils.attach_volume_to_controller(instance_name,
                                                       ctrller_path,
@@ -154,24 +230,6 @@ class VolumeOps(object):
                           instance_name)
                 if target_iqn:
                     self._volutils.logout_storage_target(target_iqn)
-
-    def _get_free_controller_slot(self, scsi_controller_path):
-        attached_disks = self._vmutils.get_attached_disks(scsi_controller_path)
-        used_slots = [int(disk.AddressOnParent) for disk in attached_disks]
-
-        for slot in xrange(constants.SCSI_CONTROLLER_SLOTS_NUMBER):
-            if slot not in used_slots:
-                return slot
-        raise vmutils.HyperVException("Exceeded the maximum number of slots")
-
-    def detach_volumes(self, block_device_info, instance_name):
-        mapping = driver.block_device_info_get_mapping(block_device_info)
-        for vol in mapping:
-            self.detach_volume(vol['connection_info'], instance_name)
-
-    def logout_storage_target(self, target_iqn):
-        LOG.debug("Logging off storage target %s", target_iqn)
-        self._volutils.logout_storage_target(target_iqn)
 
     def detach_volume(self, connection_info, instance_name):
         """Detach a volume to the SCSI controller."""
@@ -200,18 +258,6 @@ class VolumeOps(object):
         else:
             LOG.debug("Skipping disconnecting target %s as there "
                       "are LUNs still being used.", target_iqn)
-
-    def get_volume_connector(self, instance):
-        if not self._initiator:
-            self._initiator = self._volutils.get_iscsi_initiator()
-            if not self._initiator:
-                LOG.warn(_('Could not determine iscsi initiator name'),
-                         instance=instance)
-        return {
-            'ip': CONF.my_ip,
-            'host': CONF.host,
-            'initiator': self._initiator,
-        }
 
     def _get_mounted_disk_from_lun(self, target_iqn, target_lun,
                                    wait_for_device=False):
@@ -261,38 +307,110 @@ class VolumeOps(object):
                 LOG.debug("Could not retrieve iSCSI target from disk path: ",
                           volume_drive)
 
-        for target_iqn in targets:
-            # Disconnect the target only if we disconnect all the
-            # available LUNs.
-            total_available_luns = self._volutils.get_target_lun_count(
-                target_iqn)
-            if targets[target_iqn] == total_available_luns:
-                self.logout_storage_target(target_iqn)
-            else:
-                LOG.debug("Skipping disconnecting target %s as there "
-                          "are LUNs still being used." % target_iqn)
+        self.logout_storage_targets(targets)
 
     def get_target_from_disk_path(self, physical_drive_path):
         return self._volutils.get_target_from_disk_path(physical_drive_path)
 
-    def fix_instance_volume_disk_paths(self, instance_name, block_device_info):
-        mapping = driver.block_device_info_get_mapping(block_device_info)
+    def fix_instance_volume_disk_path(self, instance_name, connection_info,
+                                      disk_address):
+        data = connection_info['data']
+        target_lun = data['target_lun']
+        target_iqn = data['target_iqn']
 
-        if self.ebs_root_in_block_devices(block_device_info):
-            mapping = mapping[1:]
-
-        disk_address = 0
-        for vol in mapping:
-            data = vol['connection_info']['data']
-            target_lun = data['target_lun']
-            target_iqn = data['target_iqn']
-
-            mounted_disk_path = self._get_mounted_disk_from_lun(
-                target_iqn, target_lun, True)
-            ctrller_path = self._vmutils.get_vm_scsi_controller(instance_name)
-            self._vmutils.set_disk_host_resource(
-                instance_name, ctrller_path, disk_address, mounted_disk_path)
-            disk_address += 1
+        mounted_disk_path = self._get_mounted_disk_from_lun(
+            target_iqn, target_lun, True)
+        ctrller_path = self._vmutils.get_vm_scsi_controller(instance_name)
+        self._vmutils.set_disk_host_resource(
+            instance_name, ctrller_path, disk_address, mounted_disk_path)
 
     def get_target_lun_count(self, target_iqn):
         return self._volutils.get_target_lun_count(target_iqn)
+
+    def initialize_volume_connection(self, connection_info):
+        self.login_storage_target(connection_info)
+
+
+class SMBFSVolumeDriver(object):
+    def __init__(self):
+        self._pathutils = utilsfactory.get_pathutils()
+        self._vmutils = utilsfactory.get_vmutils()
+        self._volutils = utilsfactory.get_volumeutils()
+        self._username_regex = re.compile(r'user(?:name)?=([^, ]+)')
+        self._password_regex = re.compile(r'pass(?:word)?=([^, ]+)')
+
+    def attach_volume(self, connection_info, instance_name, ebs_root=False):
+        self.ensure_share_mounted(connection_info)
+
+        disk_path = self._get_disk_path(connection_info)
+
+        try:
+            if ebs_root:
+                ctrller_path = self._vmutils.get_vm_ide_controller(
+                    instance_name, 0)
+                slot = 0
+            else:
+                ctrller_path = self._vmutils.get_vm_scsi_controller(
+                 instance_name)
+                slot = self._vmutils.get_free_controller_slot(ctrller_path)
+
+            self._vmutils.attach_drive(instance_name,
+                                       disk_path,
+                                       ctrller_path,
+                                       slot)
+        except vmutils.HyperVException as exn:
+            LOG.exception(_('Attach volume failed: %s'), exn)
+            raise vmutils.HyperVException(_('Unable to attach volume '
+                                            'to instance %s') % instance_name)
+
+    def detach_volume(self, connection_info, instance_name):
+        LOG.debug("Detaching volume: %(connection_info)s "
+                  "from %(instance_name)s",
+                  {'connection_info': connection_info,
+                   'instance_name': instance_name})
+
+        disk_path = self._get_disk_path(connection_info)
+        self._vmutils.detach_vm_disk(instance_name, disk_path,
+                                     is_physical=False)
+
+    def _get_export_path(self, connection_info):
+        return connection_info['data']['export'].replace(
+            '/', '\\').rstrip('\\')
+
+    def _get_disk_path(self, connection_info):
+        export = self._get_export_path(connection_info)
+        disk_name = connection_info['data']['name']
+        disk_path = os.path.join(export, disk_name)
+        return disk_path
+
+    def ensure_share_mounted(self, connection_info):
+        export_path = self._get_export_path(connection_info)
+
+        if not self._pathutils.check_smb_mapping(export_path):
+            opts_str = connection_info['data'].get('options', '')
+            username, password = self._parse_credentials(opts_str)
+            self._pathutils.mount_smb_share(export_path,
+                                            username=username,
+                                            password=password)
+
+    def _parse_credentials(self, opts_str):
+        username = password = None
+
+        match = self._username_regex.findall(opts_str)
+        if match and match[0] != 'guest':
+            username = match[0].replace('\\\\', '\\')
+        else:
+            username = None
+
+        match = self._password_regex.findall(opts_str)
+        if match:
+            password = match[0]
+
+        return username, password
+
+    def fix_instance_volume_disk_path(self, instance_name, connection_info,
+                                      disk_address):
+        self.ensure_share_mounted(connection_info)
+
+    def initialize_volume_connection(self, connection_info):
+        self.ensure_share_mounted(connection_info)

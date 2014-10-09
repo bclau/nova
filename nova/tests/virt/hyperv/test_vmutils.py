@@ -249,6 +249,20 @@ class VMUtilsTestCase(test.NoDBTestCase):
         path = self._vmutils.get_vm_scsi_controller(self._FAKE_VM_NAME)
         self.assertEqual(self._FAKE_RES_PATH, path)
 
+    def test_get_free_controller_slot_exception(self):
+        fake_drive = mock.MagicMock()
+        type(fake_drive).AddressOnParent = mock.PropertyMock(
+            side_effect=xrange(constants.SCSI_CONTROLLER_SLOTS_NUMBER))
+        fake_scsi_controller_path = 'fake_scsi_controller_path'
+
+        with mock.patch.object(self._vmutils,
+                'get_attached_disks') as fake_get_attached_disks:
+            fake_get_attached_disks.return_value = (
+                [fake_drive] * constants.SCSI_CONTROLLER_SLOTS_NUMBER)
+            self.assertRaises(vmutils.HyperVException,
+                              self._vmutils.get_free_controller_slot,
+                              fake_scsi_controller_path)
+
     def test_get_vm_ide_controller(self):
         self._prepare_get_vm_controller(self._vmutils._IDE_CTRL_RES_SUB_TYPE)
         path = self._vmutils.get_vm_ide_controller(self._FAKE_VM_NAME,

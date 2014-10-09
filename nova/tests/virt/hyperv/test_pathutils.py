@@ -27,7 +27,10 @@ class PathUtilsTestCase(test.NoDBTestCase):
     def setUp(self):
         self.fake_instance_dir = os.path.join('C:', 'fake_instance_dir')
         self.fake_instance_name = 'fake_instance_name'
+
+        pathutils.PathUtils.__init__ = lambda x: None
         self._pathutils = pathutils.PathUtils()
+        self._pathutils.smb_conn = mock.MagicMock()
         super(PathUtilsTestCase, self).setUp()
 
     def _mock_lookup_configdrive_path(self, ext):
@@ -56,3 +59,43 @@ class PathUtilsTestCase(test.NoDBTestCase):
         configdrive_path = self._pathutils.lookup_configdrive_path(
             self.fake_instance_name)
         self.assertIsNone(configdrive_path)
+
+    def _test_check_smb_mapping(self, existing_mappings=False,
+                                share_available=False):
+        with mock.patch('os.path.exists', lambda x: share_available):
+            fake_mapping = mock.MagicMock()
+            if existing_mappings:
+                fake_mappings = [fake_mapping]
+            else:
+                fake_mappings = []
+
+            self._pathutils.smb_conn.query.return_value = fake_mappings
+            ret_val = self._pathutils.check_smb_mapping(
+                mock.sentinel.share_path)
+
+            if existing_mappings:
+                if share_available:
+                    self.assertTrue(ret_val)
+                else:
+                    fake_mapping.Remove.assert_called_once_with(True, True)
+            else:
+                self.assertFalse(ret_val)
+
+    def test_check_mapping(self):
+        self._test_check_smb_mapping()
+
+    def test_remake_unavailable_mapping(self):
+        self._test_check_smb_mapping(True, False)
+
+    def test_available_mapping(self):
+        self._test_check_smb_mapping(True, True)
+
+    def test_mount_smb(self):
+        fake_create = self._pathutils.smb_conn.Msft_SmbMapping.Create
+        self._pathutils.mount_smb_share(mock.sentinel.share_path,
+                                        mock.sentinel.username,
+                                        mock.sentinel.password)
+        fake_create.assert_called_once_with(
+            RemotePath=mock.sentinel.share_path,
+            UserName=mock.sentinel.username,
+            Password=mock.sentinel.password)

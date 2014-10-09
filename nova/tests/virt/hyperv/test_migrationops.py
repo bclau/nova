@@ -40,13 +40,14 @@ class MigrationOpsTestCase(test.NoDBTestCase):
         self._migrationops = migrationops.MigrationOps()
         self._migrationops._vmops = mock.MagicMock()
         self._migrationops._vmutils = mock.MagicMock()
+        self._migrationops._pathutils = mock.Mock()
 
     def test_check_and_attach_config_drive_unknown_path(self):
         instance = fake_instance.fake_instance_obj(self.context,
             expected_attrs=['system_metadata'])
         instance.config_drive = 'True'
-        self._migrationops._pathutils.lookup_configdrive_path = mock.MagicMock(
-            return_value=None)
+        self._migrationops._pathutils.lookup_configdrive_path.return_value = (
+            None)
         self.assertRaises(vmutils.HyperVException,
                           self._migrationops._check_and_attach_config_drive,
                           instance)
