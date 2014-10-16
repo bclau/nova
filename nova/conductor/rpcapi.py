@@ -395,6 +395,17 @@ class ComputeTaskAPI(object):
                           disk_over_commit=disk_over_commit,
                           reservations=reservations)
 
+    def failover_server(self, context, instance, scheduler_hint):
+        if self.client.can_send_version('1.6'):
+            version = '1.6'
+        else:
+            instance = jsonutils.to_primitive(
+                    objects_base.obj_to_primitive(instance))
+            version = '1.4'
+        cctxt = self.client.prepare(version=version)
+        return cctxt.call(context, 'failover_server',
+                          instance=instance, scheduler_hint=scheduler_hint)
+
     def build_instances(self, context, instances, image, filter_properties,
             admin_password, injected_files, requested_networks,
             security_groups, block_device_mapping, legacy_bdm=True):

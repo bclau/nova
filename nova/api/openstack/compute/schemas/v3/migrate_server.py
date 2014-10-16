@@ -38,5 +38,23 @@ migrate_live = {
     'additionalProperties': False,
 }
 
+
+failover_migrate = {
+    'type': 'object',
+    'properties': {
+        'os-migrateFailover': {
+            'type': 'object',
+            'properties': {
+                'host': host
+            },
+            'required': ['host'],
+            'additionalProperties': False,
+        },
+    },
+    'required': ['os-migrateFailover'],
+    'additionalProperties': False,
+}
+
+
 host = copy.deepcopy(parameter_types.hostname)
 host['type'] = ['string', 'null']

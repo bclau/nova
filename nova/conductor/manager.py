@@ -490,6 +490,17 @@ class ComputeTaskManager(base.Base):
         else:
             raise NotImplementedError()
 
+    def failover_migrate(self, context, insstance, scheduler_hint):
+        if instance and not isinstance(instance, nova_object.NovaObject):
+            # NOTE(danms): Until v2 of the RPC API, we need to tolerate
+            # old-world instance objects here
+            attrs = ['metadata', 'system_metadata', 'info_cache',
+                     'security_groups']
+            instance = objects.Instance._from_db_object(
+                context, objects.Instance(), instance,
+                expected_attrs=attrs)
+
+
     def _cold_migrate(self, context, instance, flavor, filter_properties,
                       reservations):
         image_ref = instance.image_ref

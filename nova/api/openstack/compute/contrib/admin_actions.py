@@ -370,6 +370,54 @@ class AdminActionsController(wsgi.Controller):
 
         return webob.Response(status_int=202)
 
+    @wsgi.action('os-migrateFailover')
+    def _migrate_failover(self, req, id, body):
+        """Permit admins to register a server failover migration to a new
+        host.
+        """
+        context = req.environ["nova.context"]
+        authorize(context, 'migrateFailover')
+        # TODO(claudiub): authorize?
+
+        try:
+            host = body["os-migrateFailover"]["host"]
+        except (TypeError, KeyError):
+            msg = _("host must be specified for failover migration.")
+            raise exc.HTTPBadRequest(explanation=msg)
+
+        instance = common.get_instance(self.compute_api, context, id,
+                                       want_objects=True)
+        try:
+            self.compute_api.failover_migrate(context, instance, host)
+            #TODO(claudiub): what exceptions to catch?
+        except (exception.NoValidHost,
+                exception.ComputeServiceUnavailable,
+                exception.InvalidHypervisorType,
+                exception.InvalidCPUInfo,
+                exception.UnableToMigrateToSelf,
+                exception.DestinationHypervisorTooOld,
+                exception.InvalidLocalStorage,
+                exception.InvalidSharedStorage,
+                exception.HypervisorUnavailable,
+                exception.InstanceNotRunning,
+                exception.MigrationPreCheckError) as ex:
+            raise exc.HTTPBadRequest(explanation=ex.format_message())
+        except exception.InstanceNotFound as e:
+            raise exc.HTTPNotFound(explanation=e.format_message())
+        except exception.InstanceIsLocked as e:
+            raise exc.HTTPConflict(explanation=e.format_message())
+        except exception.InstanceInvalidState as state_error:
+            common.raise_http_conflict_for_instance_invalid_state(state_error,
+                    'os-migrateFailover')
+        except Exception:
+            msg = _("Failover migration of instance %(id)s to host %(host)s "
+                    "failed") % {'id': id, 'host': host}
+            LOG.exception(msg)
+            # Return messages from scheduler
+            raise exc.HTTPBadRequest(explanation=msg)
+
+        return webob.Response(status_int=202)
+
     @wsgi.action('os-resetState')
     def _reset_state(self, req, id, body):
         """Permit admins to reset the state of a server."""
