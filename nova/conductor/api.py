@@ -240,6 +240,10 @@ class LocalComputeTaskAPI(object):
             context, instance, scheduler_hint, True, False, None,
             block_migration, disk_over_commit, None)
 
+    def failover_migrate_instance(self, context, instance, host_name):
+        scheduler_hint = {'host': host_name}
+        self._manager.failover_server(context, instance, scheduler_hint)
+
     def build_instances(self, context, instances, image,
             filter_properties, admin_password, injected_files,
             requested_networks, security_groups, block_device_mapping,
@@ -350,6 +354,11 @@ class ComputeTaskAPI(object):
         self.conductor_compute_rpcapi.migrate_server(
             context, instance, scheduler_hint, True, False, None,
             block_migration, disk_over_commit, None)
+
+    def failover_migrate_instance(self, context, instance, host_name):
+        scheduler_hint = {'host': host_name}
+        self.conductor_compute_rpcapi.failover_server(context, instance,
+                                                      scheduler_hint)
 
     def build_instances(self, context, instances, image, filter_properties,
             admin_password, injected_files, requested_networks,

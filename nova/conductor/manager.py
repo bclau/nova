@@ -490,6 +490,23 @@ class ComputeTaskManager(base.Base):
         else:
             raise NotImplementedError()
 
+    def failover_server(self, context, instance, scheduler_hint):
+        if instance and not isinstance(instance, nova_object.NovaObject):
+            attrs = ['metadata', 'system_metadata', 'info_cache',
+                     'security_groups']
+            instance = objects.Instance._from_db_object(
+                context, objects.Instance(), instance,
+                expected_attrs=attrs)
+
+        if instance.vm_state == vm_states.ERROR:
+            instance.vm_state = vm_states.ACTIVE
+        if instance.power_state == power_state.NOSTATE:
+            instance.power_state = power_state.RUNNING
+
+        instance.host = host_name
+        instance.node = host_name
+        instance.save(expected_task_state=[None])
+
     def _cold_migrate(self, context, instance, flavor, filter_properties,
                       reservations):
         image_ref = instance.image_ref
