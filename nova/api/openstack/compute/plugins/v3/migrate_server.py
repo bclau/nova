@@ -104,6 +104,42 @@ class MigrateServerController(wsgi.Controller):
                     'os-migrateLive', id)
         return webob.Response(status_int=202)
 
+    @extensions.expected_errors((400, 404, 409))
+    @wsgi.action('migrate_failover')
+    @validation.schema(migrate_server.failover_migrate)
+    def _migrate_failover(self, req, id, body):
+        """Permit admins to register a server failover migration to a new
+        host.
+        """
+        context = req.environ["nova.context"]
+        authorize(context, 'migrate_failover')
+
+        host = body["os-migrateFailover"]["host"]
+
+        try:
+            instance = common.get_instance(self.compute_api, context, id,
+                                           want_objects=True)
+            self.compute_api.live_migrate(context, instance, host)
+            # TODO(claudiub): what exceptions?
+        except (exception.NoValidHost,
+                exception.ComputeServiceUnavailable,
+                exception.InvalidHypervisorType,
+                exception.InvalidCPUInfo,
+                exception.UnableToMigrateToSelf,
+                exception.DestinationHypervisorTooOld,
+                exception.InvalidLocalStorage,
+                exception.InvalidSharedStorage,
+                exception.HypervisorUnavailable,
+                exception.InstanceNotRunning,
+                exception.MigrationPreCheckError) as ex:
+            raise exc.HTTPBadRequest(explanation=ex.format_message())
+        except exception.InstanceIsLocked as e:
+            raise exc.HTTPConflict(explanation=e.format_message())
+        except exception.InstanceInvalidState as state_error:
+            common.raise_http_conflict_for_instance_invalid_state(state_error,
+                    'os-migrateFailover')
+        return webob.Response(status_int=202)
+
 
 class MigrateServer(extensions.V3APIExtensionBase):
     """Enable migrate and live-migrate server actions."""
