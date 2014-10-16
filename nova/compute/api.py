@@ -3176,6 +3176,24 @@ class API(base.Base):
                 host_name, block_migration=block_migration,
                 disk_over_commit=disk_over_commit)
 
+    # TODO(claudiub): do we need checks? What if state is not active? Set it?
+    @check_instance_lock
+    @check_instance_cell
+    def failover_migrate(self, context, instance, host_name):
+        """Register a failover request for a server to a new host."""
+        LOG.debug("An instance was failovered to host %s", host_name,
+                  instance=instance)
+
+        # TODO(claudiub): task_state? vm_state?
+        LOG.warning(instance.obj_to_primitive())
+        instance.vm_state = vm_states.ACTIVE
+        instance.host = host_name
+        instance.node = host_name
+        instance.save(expected_task_state=[None])
+
+        self.compute_task_api.failover_migrate_instance(context, instance,
+                                                        host_name)
+
     @check_instance_state(vm_state=[vm_states.ACTIVE, vm_states.STOPPED,
                                     vm_states.ERROR])
     def evacuate(self, context, instance, host, on_shared_storage,
