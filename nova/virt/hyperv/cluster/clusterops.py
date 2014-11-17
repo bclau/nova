@@ -19,6 +19,7 @@ Management class for Cluster VM operations.
 
 import socket
 
+import cinderclient.client
 from oslo.config import cfg
 
 from nova.i18n import _, _LI, _LE
@@ -40,7 +41,29 @@ from nova import volume
 
 LOG = logging.getLogger(__name__)
 
+cinder_opts = [
+    cfg.StrOpt('version',
+               default='1',
+               help='Cinder client version used.'),
+    cfg.StrOpt('admin_auth_url',
+               default=None,
+               help='Keystone admin authentification URL.'),
+    cfg.StrOpt('admin_tenant_name',
+               default=None,
+               help='Keystone admin tenant name.'),
+    cfg.StrOpt('admin_username',
+               default=None,
+               help='Keystone admin user name.'),
+    cfg.StrOpt('admin_password',
+               default=None,
+               help='Keystone admin user password.'),
+    cfg.StrOpt('endpoint_type',
+               default='publicURL',
+               help='Endpoint Type.'),
+]
+
 CONF = cfg.CONF
+CONF.register_opts(cinder_opts, 'cinder')
 
 
 class ClusterOps(object):
@@ -63,9 +86,10 @@ class ClusterOps(object):
             self._refresh_connectors_map()
 
             self._volops = volumeops.VolumeOps()
-
+            self._volume_client = self._create_volume_client()
             self._context = context.get_admin_context()
             self._network_api = network.API()
+            #self._volume_api = volume.API()
             #self._compute_task_api = conductor.ComputeTaskAPI()
             self._driver = driver
 
@@ -90,6 +114,25 @@ class ClusterOps(object):
             except Exception as e:
                 LOG.exception(_LE('Exception during iscsi connector fetching: '
                                   '%s'), e)
+
+    def _create_volume_client(self):
+        client_args = (CONF.cinder.admin_username,
+                       CONF.cinder.admin_password,
+                       CONF.cinder.admin_tenant_name,
+                       CONF.cinder.admin_auth_url)
+
+        if not all(client_args):
+            raise Exception(_('No nova / cinder credentials provided for '
+                              'failover.'))
+
+        client_kwargs = {'endpoint_type': CONF.cinder.endpoint_type,
+                         'region_name': None,
+                         'no_cache': True,
+                         'insecure': False,
+                         'http_log_debug': True}
+
+        return cinderclient.client.Client(CONF.cinder.version,
+                                          *client_args, **client_kwargs)
 
     def get_instance_host(self, instance):
         return self._clustutils.get_vm_host(instance.name)
@@ -164,10 +207,78 @@ class ClusterOps(object):
 
         LOG.info(_LI('Failovering %s to %s'), instance_name, new_host)
 
+        self._post_failover_setup(instance)
         self._nova_failover_server(instance, new_host)
         #self._compute_task_api.failover_migrate_instance(
         #    self._context, instance, new_host)
         self._failover_migrate_networks(instance, old_host)
+
+    def _post_failover_setup(self, instance):
+        """ This is called after a VM failovered to this node.
+        The failovered VM can have volumes attached. The storage targets must
+        be logged in.
+        The VM can be down because the storage targets were not logged so. So,
+        we must reattach the volumes and start the VM.
+
+        TODO(claudiub): don't start the VM if it was supposed to be down.
+        TODO(claudiub): starting the VM might generate a new WMI event for
+                        failover. Ignore it?
+
+        :return: final state of the VM.
+        """
+
+        try:
+            volumes = self._prepare_instance_volumes(instance)
+            if not volumes:
+                LOG.debug('No volumes to refresh.')
+                return
+
+            block_device_mapping = {'block_device_mapping': volumes}
+
+            # initialize connections on Hyper-V side.
+            self._volops.initialize_volumes_connection(block_device_mapping)
+            self._volops.fix_instance_volume_disk_paths(instance.name,
+                                                        block_device_mapping)
+            self._clustutils.bring_online(instance.name)
+        except Exception as e:
+            LOG.exception('Exception during volume init or startup: %s', e)
+
+    def _prepare_instance_volumes(self, instance):
+        # TODO(claudiub): this looks like a volumeops job.
+        bdms = self._get_instance_block_device_mappings(instance)
+        if not bdms:
+            return []
+
+        old_host = instance.host  # or instance.node
+        connector = self._cluster_connectors.get(old_host, None)
+        if not connector:
+            # this can happen if new nodes are added to the cluster.
+            # or if a node was previously not running.
+            self._refresh_connectors_map()
+
+        connector = self._cluster_connectors[old_host]
+        new_connector = self._cluster_connectors[self._this_node]
+
+        for bdm in bdms:
+            try:
+                self._volume_client.volumes.terminate_connection(bdm.volume_id,
+                                                                 connector)
+            except Exception as e:
+                LOG.exception(_LE('Exception during volume disconnect: %s'), e)
+            try:
+                # initialize connection on cinder side.
+                conn_info = self._volume_client.volumes.initialize_connection(
+                    bdm.volume_id, new_connector)
+
+                if 'serial' not in conn_info:
+                    conn_info['serial'] = bdm.volume_id
+
+                bdm._preserve_multipath_id(conn_info)
+                bdm['connection_info'] = conn_info
+            except Exception as e:
+                LOG.exception(_LE('Exception during connection refresh: %s'),
+                              e)
+        return bdms
 
     def _failover_migrate_networks(self, instance, source):
         """ This is called after a VM failovered to this node.
