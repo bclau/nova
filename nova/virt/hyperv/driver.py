@@ -18,6 +18,7 @@ A Hyper-V Nova Compute driver.
 """
 
 import platform
+import pythoncom
 
 from oslo_log import log as logging
 
@@ -37,6 +38,8 @@ LOG = logging.getLogger(__name__)
 class HyperVDriver(driver.ComputeDriver):
     def __init__(self, virtapi):
         super(HyperVDriver, self).__init__(virtapi)
+
+        pythoncom.CoInitializeEx(pythoncom.COINIT_APARTMENTTHREADED)
 
         self._hostops = hostops.HostOps()
         self._volumeops = volumeops.VolumeOps()
