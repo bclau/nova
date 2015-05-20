@@ -1780,6 +1780,121 @@ class _ComputeAPIUnitTestMixIn(object):
     def _test_resize(self, mock_get_all_by_host,
                      mock_get_by_instance_uuid,
                      flavor_id_passed=True,
+
+    def test_check_live_resizable_flavor_fewer_vcpus(self):
+        old_flavor = mock.MagicMock(vcpus=101)
+        new_flavor = mock.MagicMock(vcpus=100)
+
+        self.assertFalse(self.compute_api._check_live_resizable_flavor(
+            mock.sentinel.context, mock.sentinel.instance,
+            old_flavor, new_flavor))
+
+    def test_check_live_resizable_flavor_less_memory(self):
+        old_flavor = mock.MagicMock(vcpus=1, memory_mb=1024)
+        new_flavor = mock.MagicMock(vcpus=2, memory_mb=512)
+
+        self.assertFalse(self.compute_api._check_live_resizable_flavor(
+            mock.sentinel.context, mock.sentinel.instance,
+            old_flavor, new_flavor))
+
+    @mock.patch.object(compute_api.API, 'is_volume_backed_instance')
+    def test_check_live_resizable_flavor_smaller_disk(self, mock_is_volume):
+        old_flavor = mock.MagicMock(vcpus=1, memory_mb=256, root_gb=10000)
+        new_flavor = mock.MagicMock(vcpus=2, memory_mb=512, root_gb=1)
+        mock_is_volume.return_value = False
+
+        self.assertFalse(self.compute_api._check_live_resizable_flavor(
+            mock.sentinel.context, mock.sentinel.instance,
+            old_flavor, new_flavor))
+
+    @mock.patch.object(compute_api.API, 'is_volume_backed_instance')
+    def test_check_live_resizable_flavor_volume_backed(self, mock_is_volume):
+        old_flavor = mock.MagicMock(vcpus=1, memory_mb=256, root_gb=10000)
+        new_flavor = mock.MagicMock(vcpus=2, memory_mb=512, root_gb=1)
+        mock_is_volume.return_value = True
+
+        self.assertTrue(self.compute_api._check_live_resizable_flavor(
+            mock.sentinel.context, mock.sentinel.instance,
+            old_flavor, new_flavor))
+        mock_is_volume.assert_called_once_with(mock.sentinel.context,
+                                               mock.sentinel.instance)
+
+    @mock.patch.object(flavors, 'get_flavor_by_flavor_id')
+    def _test_live_resize_exception(self, mock_get_flavor_by_id, exc,
+                                    instance=None, disabled=False):
+        policy.reset()
+        rules = {'compute:live_resize': ''}
+        policy.set_rules(oslo_policy.Rules.from_dict(rules))
+        instance = instance or self._create_instance_obj()
+        new_flavor = self._create_flavor(id=200, flavorid='new-flavor-id',
+                                         name='new_flavor', disabled=disabled)
+        mock_get_flavor_by_id.return_value = new_flavor
+
+        self.assertRaises(exc, self.compute_api.live_resize,
+                          self.context, instance, flavor_id='new-flavor-id')
+
+    def test_live_resize_same_flavor(self):
+        self.compute_api._cell_type = 'api'
+        instance = self._create_instance_obj()
+        current_flavor = instance.get_flavor()
+        current_flavor.id = 200
+
+        self._test_live_resize_exception(
+            exc=exception.CannotResizeToSameFlavor, instance=instance)
+
+    def test_live_resize_disabled_flavor(self):
+        self._test_live_resize_exception(exc=exception.FlavorNotFound,
+                                         disabled=True)
+
+    @mock.patch.object(compute_api.API, '_check_live_resizable_flavor',
+                       mock.MagicMock(return_value=False))
+    def test_live_resize_smaller_flavor(self):
+        self._test_live_resize_exception(
+            exc=exception.CannotLiveResizeToSmallerFlavor)
+
+    @mock.patch.object(compute_api.compute_utils, 'reserve_quota_delta')
+    @mock.patch.object(compute_api.API, '_check_live_resizable_flavor')
+    def test_live_resize_over_quota(self, mock_check_live_resizable,
+                                    mock_reserve_quota):
+        mock_reserve_quota.side_effect = exception.OverQuota(
+            overs=[], quotas={}, usages=mock.sentinel.usages)
+        self._test_live_resize_exception(exc=exception.TooManyInstances)
+
+    @mock.patch.object(compute_api.API, '_record_action_start')
+    @mock.patch.object(compute_api.API, '_resize_cells_support')
+    @mock.patch.object(compute_api.compute_utils, 'reserve_quota_delta')
+    @mock.patch.object(compute_api.API, '_check_live_resizable_flavor')
+    @mock.patch.object(flavors, 'get_flavor_by_flavor_id')
+    def test_live_resize(self, mock_get_flavor, mock_check_live_resizable,
+                         mock_reserve_quota, mock_resize_cells,
+                         mock_record_action):
+        policy.reset()
+        rules = {'compute:live_resize': ''}
+        policy.set_rules(oslo_policy.Rules.from_dict(rules))
+        instance = self._create_instance_obj()
+        instance.save = mock.MagicMock()
+        current_flavor = instance.get_flavor()
+        new_flavor = self._create_flavor(id=200, flavorid='new-flavor-id',
+                                         name='new_flavor', disabled=False)
+        mock_get_flavor.return_value = new_flavor
+        self.compute_api._cell_type = 'api'
+
+        with mock.patch.object(self.compute_api.compute_task_api,
+                               'live_resize_instance') as mock_live_resize:
+            self.compute_api.live_resize(self.context, instance,
+                                         'new-flavor-id')
+
+        self.assertEqual(task_states.LIVE_RESIZING, instance.task_state)
+        self.assertEqual(0, instance.progress)
+        mock_resize_cells.assert_called_once_with(
+            self.context, mock_reserve_quota.return_value, instance,
+            current_flavor, new_flavor)
+        mock_live_resize.assert_called_once_with(
+            self.context, instance, flavor=new_flavor,
+            reservations=mock_reserve_quota.return_value.reservations,
+            scheduler_hint={'filter_properties': {'ignore_hosts': []}})
+
+    def _test_resize(self, flavor_id_passed=True,
                      same_host=False, allow_same_host=False,
                      project_id=None,
                      extra_kwargs=None,

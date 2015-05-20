@@ -3197,6 +3197,86 @@ class API(base.Base):
             'resize' or 'migration')
         mig.create()
 
+    def _check_live_resizable_flavor(self, context, instance, old_flavor,
+                                     new_flavor, image):
+        # The new_flavor must be larger than the old_flavor.
+        if old_flavor.vcpus > new_flavor.vcpus:
+            raise exception.CannotLiveResizeToSmallerFlavor(resource='vcpus')
+        if old_flavor.memory_mb > new_flavor.memory_mb:
+            raise exception.CannotLiveResizeToSmallerFlavor(resource='memory')
+
+        vol_backed = compute_utils.is_volume_backed_instance(context, instance)
+        if old_flavor.root_gb > new_flavor.root_gb and not vol_backed:
+            raise exception.CannotLiveResizeToSmallerFlavor(resource='disk')
+
+        os_resize = image['properties'].get('os_live_resize', [])
+
+        if old_flavor.vcpus < new_flavor.vcpus and 'vcpu' not in os_resize:
+            raise exception.CannotLiveResizeInstance(resource='vcpus')
+        if (old_flavor.memory_mb < new_flavor.memory_mb and
+                'memory' not in os_resize):
+            raise exception.CannotLiveResizeInstance(resource='memory')
+        if (old_flavor.root_gb > new_flavor.root_gb and not vol_backed and
+                'disk' not in os_resize):
+            raise exception.CannotLiveResizeInstance(resource='disk')
+
+        # TODO(claudiub): check ephemerals, NUMA topology changes.
+
+    @check_instance_lock
+    @check_instance_cell
+    @check_instance_state(vm_state=[vm_states.ACTIVE, vm_states.SUSPENDED,
+                                    vm_states.PAUSED])
+    def live_resize(self, context, instance, flavor_id):
+        """Live resize a running instance.
+
+        The instance should be resized to the new flavor_id.
+        """
+
+        import pdb; pdb.set_trace()
+        current_flavor = instance.get_flavor()
+        new_flavor = flavors.get_flavor_by_flavor_id(flavor_id,
+                                                     read_deleted="no")
+
+        if not new_flavor or new_flavor.disabled:
+            raise exception.FlavorNotFound(flavor_id=flavor_id)
+
+        if current_flavor.id == new_flavor.id and self.cell_type != 'compute':
+            raise exception.CannotResizeToSameFlavor()
+
+        image_id, image = self._get_image(context, instance.image_ref)
+        self._check_live_resizable_flavor(context, instance,
+                                          current_flavor, new_flavor, image)
+
+        LOG.debug("Old instance type %(current_instance_type_name)s, "
+                  "new instance type %(new_instance_type_name)s",
+                  {'current_instance_type_name': current_flavor.name,
+                   'new_instance_type_name': new_flavor.name},
+                  instance=instance)
+
+        # ensure there is sufficient headroom for upsizes
+        self._check_quota_for_upsize(context, instance,
+                                     current_flavor, new_flavor)
+
+        instance.task_state = task_states.LIVE_RESIZING
+        instance.progress = 0
+        instance.save(expected_task_state=[None])
+
+        filter_properties = {'ignore_hosts': []}
+
+        if self.cell_type == 'api':
+            # Create migration record.
+            self._resize_cells_support(context, instance,
+                                       current_flavor, new_flavor)
+
+        self._record_action_start(context, instance,
+                                  instance_actions.LIVE_RESIZE)
+
+        scheduler_hint = {'filter_properties': filter_properties}
+        self.compute_task_api.live_resize_instance(
+                context, instance,
+                flavor=new_flavor,
+                scheduler_hint=scheduler_hint)
+
     @check_instance_lock
     @check_instance_cell
     @check_instance_state(vm_state=[vm_states.ACTIVE, vm_states.STOPPED])

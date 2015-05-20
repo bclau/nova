@@ -85,6 +85,7 @@ class ServersController(wsgi.Controller):
     schema_server_create_v242 = schema_servers.base_create_v242
     schema_server_create_v252 = schema_servers.base_create_v252
     schema_server_create_v257 = schema_servers.base_create_v257
+    schema_server_live_resize_v261 = schema_servers.base_live_resize
 
     # NOTE(alex_xu): Please do not add more items into this list. This list
     # should be removed in the future.
@@ -875,6 +876,20 @@ class ServersController(wsgi.Controller):
         helpers.translate_attributes(helpers.RESIZE, resize_dict, kwargs)
 
         self._resize(req, id, flavor_ref, **kwargs)
+
+    @wsgi.Controller.api_version('2.61')
+    @wsgi.response(202)
+    @wsgi.expected_errors((400, 401, 403, 404, 409))
+    @wsgi.action('liveResize')
+    @validation.schema(schema_server_live_resize_v261)
+    def _action_live_resize(self, req, id, body):
+        """Live resizes a given instance to the flavor size requested."""
+        resize_dict = body['liveResize']
+        flavor_id = str(resize_dict["flavorRef"])
+        context = req.environ["nova.context"]
+
+        instance = self._get_server(context, req, id)
+        self.compute_api.live_resize(context, instance, flavor_id)
 
     @wsgi.response(202)
     @wsgi.expected_errors((400, 403, 404, 409))

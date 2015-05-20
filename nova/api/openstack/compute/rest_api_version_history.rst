@@ -765,3 +765,19 @@ From this version of the API users can attach a ``multiattach`` capable volume
 to multiple instances. The API request for creating the additional attachments
 is the same. The chosen virt driver and the volume back end has to support the
 functionality as well.
+
+2.61
+----
+
+Added instance live-resize.
+
+A user can request an instance to be live resized to a new flavor.
+
+Live resize is requested via the API call ``POST /servers/<id>/action`` and
+pass the following in the request body::
+
+    {
+        "liveResize" : {
+            "flavorRef" : "<flavor_id>",
+        }
+    }

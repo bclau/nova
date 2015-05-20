@@ -388,6 +388,7 @@ class RealRolePolicyTestCase(test.NoDBTestCase):
 "os_compute_api:servers:reboot",
 "os_compute_api:servers:rebuild",
 "os_compute_api:servers:resize",
+"os_compute_api:servers:live_resize",
 "os_compute_api:servers:revert_resize",
 "os_compute_api:servers:show",
 "os_compute_api:servers:update",

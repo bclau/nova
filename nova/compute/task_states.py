@@ -49,6 +49,10 @@ RESIZE_MIGRATING = fields.InstanceTaskState.RESIZE_MIGRATING
 RESIZE_MIGRATED = fields.InstanceTaskState.RESIZE_MIGRATED
 RESIZE_FINISH = fields.InstanceTaskState.RESIZE_FINISH
 
+# possible task states during live_resize()
+LIVE_RESIZING = 'live_resizing'
+LIVE_RESIZED = 'live_resized'
+
 # possible task states during revert_resize()
 RESIZE_REVERTING = fields.InstanceTaskState.RESIZE_REVERTING
 

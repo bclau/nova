@@ -1363,6 +1363,15 @@ class CannotResizeToSameFlavor(NovaException):
     msg_fmt = _("When resizing, instances must change flavor!")
 
 
+class CannotLiveResizeToSmallerFlavor(NovaException):
+    msg_fmt = _("Cannot live resize the instance's %(resource)s to a smaller "
+                "value. Only upsizing is supported.")
+
+
+class CannotLiveResizeInstance(NovaException):
+    msg_fmt = _("The instance does not support resizing its %(resource)s.")
+
+
 class ResizeError(NovaException):
     msg_fmt = _("Resize error: %(reason)s")
 

@@ -1213,3 +1213,90 @@ class ServerActionsControllerTestV21(test.TestCase):
         self.assertRaises(webob.exc.HTTPConflict,
                           self.controller._action_create_image,
                           self.req, FAKE_UUID, body=body)
+
+    @mock.patch('nova.compute.api.API.live_resize')
+    @mock.patch('nova.compute.api.API.get')
+    def test_live_resize(self, mock_get, mock_live_resize):
+        body = {'liveResize': {'flavorRef': 'fake-flavor'}}
+
+        self.controller._action_live_resize(self.req, FAKE_UUID, body=body)
+
+        mock_live_resize.assert_called_once_with(
+            self.context, mock_get.return_value, 'fake-flavor')
+
+    def _check_live_resize_validation_error(self, live_resize_dict):
+        body = {'liveResize': live_resize_dict}
+
+        self.assertRaises(self.validation_error,
+                          self.controller._action_live_resize,
+                          self.req, FAKE_UUID, body=body)
+
+    def test_live_resize_no_flavor(self):
+        self._check_live_resize_validation_error({})
+
+    def test_live_resize_no_flavor_ref(self):
+        self._check_live_resize_validation_error({'flavorRef': None})
+
+    def test_live_resize_with_extra_arg(self):
+        self._check_live_resize_validation_error(
+            {'flavorRef': None, 'extra_arg': 'ument'})
+
+    def test_live_resize_server_invalid_flavor_ref(self):
+        self._check_live_resize_validation_error({'flavorRef': 4.2})
+
+    @mock.patch('nova.compute.api.API.get')
+    def test_live_resize_with_server_not_found(self, mock_get):
+        body = {'liveResize': {'flavorRef': 'fake-flavor'}}
+        mock_get.side_effect = return_server_not_found
+
+        self.assertRaises(webob.exc.HTTPNotFound,
+                          self.controller._action_live_resize,
+                          self.req, FAKE_UUID, body=body)
+
+    @mock.patch('nova.compute.api.API.live_resize')
+    def _check_live_resize_exception(self, mock_live_resize, exc,
+                                            expected_exc):
+        body = {'liveResize': {'flavorRef': 'fake-flavor'}}
+        mock_live_resize.side_effect = exc
+
+        self.assertRaises(expected_exc,
+                          self.controller._action_live_resize,
+                          self.req, FAKE_UUID, body=body)
+
+    def test_live_resize_unknown_cell(self):
+        self._check_live_resize_exception(
+            exc=exception.InstanceUnknownCell(instance_uuid='fake_id'),
+            expected_exc=webob.exc.HTTPNotFound)
+
+    def test_live_resize_with_too_many_instances(self):
+        self._check_live_resize_exception(
+            exc=exception.TooManyInstances(message="Too Many Instances"),
+            expected_exc=webob.exc.HTTPForbidden)
+
+    def test_live_resize_raises_flavor_not_found(self):
+        self._check_live_resize_exception(
+            exc=exception.FlavorNotFound(reason='', flavor_id='fake_id'),
+            expected_exc=webob.exc.HTTPBadRequest)
+
+    def test_live_resize_same_flavor(self):
+        self._check_live_resize_exception(
+            exc=exception.CannotResizeToSameFlavor,
+            expected_exc=webob.exc.HTTPBadRequest)
+
+    def test_live_resize_smaller_flavor(self):
+        self._check_live_resize_exception(
+            exc=exception.CannotLiveResizeToSmallerFlavor(old_flavor='old',
+                                                          new_flavor='new'),
+            expected_exc=webob.exc.HTTPBadRequest)
+
+    def test_live_resize_instance_locked(self):
+        self._check_live_resize_exception(
+            exc=exception.InstanceIsLocked(message="Too Many Instances"),
+            expected_exc=webob.exc.HTTPConflict)
+
+    def test_live_resize_invalid_state(self):
+        exc = exception.InstanceInvalidState(
+            attr='fake_attr', state='fake_state', method='fake_method',
+            instance_uuid='fake')
+        self._check_live_resize_exception(
+            exc=exc, expected_exc=webob.exc.HTTPConflict)

@@ -204,6 +204,16 @@ rules = [
             }
         ]),
     policy.DocumentedRuleDefault(
+        SERVERS % 'live_resize',
+        RULE_AOO,
+        "Live resize a server",
+        [
+            {
+                'method': 'POST',
+                'path': '/servers/{server_id}/action (liveResize)'
+            }
+        ]),
+    policy.DocumentedRuleDefault(
         SERVERS % 'rebuild',
         RULE_AOO,
         "Rebuild a server",

@@ -16,6 +16,7 @@
 import base64
 import time
 
+import mock
 import six
 
 from nova.api.openstack import api_version_request as avr
@@ -461,6 +462,9 @@ class ServersActionsJson226Test(ServersSampleBase):
 
 class ServersActionsJson254Test(ServersSampleBase):
     microversion = '2.54'
+
+
+class ServerStartStopJsonTest(ServersSampleBase):
     sample_dir = 'servers'
     scenarios = [('v2_54', {'api_major_version': 'v2.1'})]
 
@@ -566,3 +570,24 @@ class ServerTriggerCrashDumpJsonTest(ServersSampleBase):
                                  {})
         self.assertEqual(response.status_code, 202)
         self.assertEqual(response.text, "")
+
+
+class ServersActionsJson261Test(ServersSampleBase, _ServersActionsJsonTestMixin):
+    microversion = '2.61'
+    scenarios = [('v2_61', {'api_major_version': 'v2.1'})]
+
+    def test_live_resize_instance(self):
+        # we need to add the os_live_resize image metadata properties first.
+        img_props = {'os_live_resize': ['vcpu', 'memory', 'disk']}
+        image_service = fake.FakeImageService()
+        image_service.update(mock.sentinel.context, fake.get_valid_image_id(),
+                             {'properties': img_props})
+
+        uuid = self._post_server()
+        import pdb; pdb.set_trace()
+        self._test_server_action(uuid, "liveResize",
+                                 'server-action-live-resize',
+                                 {"flavor_ref": "2"})
+
+        # we need to cleanup.
+        fake.FakeImageService_reset()

@@ -143,6 +143,7 @@ REST_API_VERSION_HISTORY = """REST API Version History:
              API. And the os-migrations API now returns both the id and the
              uuid in response.
     * 2.60 - Add support for attaching a single volume to multiple instances.
+    * 2.61 - Adds instance live-resize API
 """
 
 # The minimum and maximum versions of the API supported
@@ -151,7 +152,7 @@ REST_API_VERSION_HISTORY = """REST API Version History:
 # Note(cyeoh): This only applies for the v2.1 API once microversions
 # support is fully merged. It does not affect the V2 API.
 _MIN_API_VERSION = "2.1"
-_MAX_API_VERSION = "2.60"
+_MAX_API_VERSION = "2.61"
 DEFAULT_API_VERSION = _MIN_API_VERSION
 
 # Almost all proxy APIs which are related to network, images and baremetal
