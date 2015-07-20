@@ -170,6 +170,9 @@ class ComputeNode(BASE, NovaBase):
     # objects.NUMATopoloogy._to_json()
     numa_topology = Column(Text)
 
+    # json-encoded dict that contains the compute node's capabilities.
+    capabilities = Column(Text, nullable=True)
+
 
 class Certificate(BASE, NovaBase):
     """Represents a x509 certificate."""

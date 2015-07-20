@@ -747,6 +747,18 @@ class NovaMigrationsCheckers(test_migrations.ModelsMigrationsSync,
         self.assertIndexMembers(engine, 'virtual_interfaces',
                                 'virtual_interfaces_uuid_idx', ['uuid'])
 
+    def _check_296(self, engine, data):
+        self.assertColumnExists(engine, 'compute_nodes', 'capabilities')
+        self.assertColumnExists(engine, 'shadow_compute_nodes', 'capabilities')
+
+        compute_nodes = oslodbutils.get_table(engine, 'compute_nodes')
+        shadow_compute_nodes = oslodbutils.get_table(engine,
+                                                     'shadow_compute_nodes')
+        self.assertIsInstance(compute_nodes.c.capabilities.type,
+                              sqlalchemy.types.Text)
+        self.assertIsInstance(shadow_compute_nodes.c.capabilities.type,
+                              sqlalchemy.types.Text)
+
 
 class TestNovaMigrationsSQLite(NovaMigrationsCheckers,
                                test_base.DbTestCase,
