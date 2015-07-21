@@ -144,6 +144,7 @@ class HostState(object):
         self.hypervisor_hostname = None
         self.cpu_info = None
         self.supported_instances = None
+        self.capabilities = None
 
         # Resource oversubscription values for the compute host:
         self.limits = {}
@@ -236,6 +237,8 @@ class HostState(object):
         # overwrite any values, or get overwritten themselves. Store in self so
         # filters can schedule with them.
         self.stats = compute.stats or {}
+
+        self.capabilities = compute.capabilities or {}
 
         # Track number of instances on host
         self.num_instances = int(self.stats.get('num_instances', 0))
