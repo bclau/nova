@@ -44,7 +44,8 @@ class Service(base.NovaPersistentObject, base.NovaObject,
     # Version 1.11: Added get_by_host_and_binary
     # Version 1.12: ComputeNode version 1.11
     # Version 1.13: Added last_seen_up
-    VERSION = '1.13'
+    # Version 1.14: ComputeNode version 1.12
+    VERSION = '1.14'
 
     fields = {
         'id': fields.IntegerField(read_only=True),
@@ -62,7 +63,7 @@ class Service(base.NovaPersistentObject, base.NovaObject,
     obj_relationships = {
         'compute_node': [('1.1', '1.4'), ('1.3', '1.5'), ('1.5', '1.6'),
                          ('1.7', '1.8'), ('1.8', '1.9'), ('1.9', '1.10'),
-                         ('1.12', '1.11')],
+                         ('1.12', '1.11'), ('1.14', '1.11')],
     }
 
     def obj_make_compatible(self, primitive, target_version):
@@ -199,7 +200,8 @@ class ServiceList(base.ObjectListBase, base.NovaObject):
     # Version 1.9: Added get_by_binary() and Service version 1.11
     # Version 1.10: Service version 1.12
     # Version 1.11: Service version 1.13
-    VERSION = '1.11'
+    # Version 1.12: Service version 1.14
+    VERSION = '1.12'
 
     fields = {
         'objects': fields.ListOfObjectsField('Service'),
@@ -218,6 +220,7 @@ class ServiceList(base.ObjectListBase, base.NovaObject):
         '1.9': '1.11',
         '1.10': '1.12',
         '1.11': '1.13',
+        '1.12': '1.14',
         }
 
     @base.remotable_classmethod
