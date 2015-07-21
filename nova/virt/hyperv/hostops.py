@@ -143,6 +143,8 @@ class HostOps(object):
                    [(arch.I686, hv_type.HYPERV, vm_mode.HVM),
                     (arch.X86_64, hv_type.HYPERV, vm_mode.HVM)]),
                'numa_topology': None,
+               'capabilities': jsonutils.dumps(
+                    self._hostutils.get_host_capabilities()),
                }
 
         return dic

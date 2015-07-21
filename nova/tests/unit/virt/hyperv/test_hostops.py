@@ -121,12 +121,16 @@ class HostOpsTestCase(test_base.HyperVBaseTestCase):
         mock_cpu_info = self._get_mock_cpu_info()
         mock_get_cpu_info.return_value = mock_cpu_info
         mock_get_hypervisor_version.return_value = mock.sentinel.VERSION
+        self._hostops._hostutils.get_host_capabilities.return_value = {
+            'hw_machine_type': [constants.IMAGE_PROP_VM_GEN_1]
+        }
 
         response = self._hostops.get_available_resource()
 
         mock_get_memory_info.assert_called_once_with()
         mock_get_cpu_info.assert_called_once_with()
         mock_get_hypervisor_version.assert_called_once_with()
+
         expected = {'supported_instances': '[["i686", "hyperv", "hvm"], '
                                            '["x86_64", "hyperv", "hvm"]]',
                     'hypervisor_hostname': mock_node(),
@@ -140,6 +144,8 @@ class HostOpsTestCase(test_base.HyperVBaseTestCase):
                     'vcpus_used': 0,
                     'hypervisor_type': 'hyperv',
                     'numa_topology': None,
+                    'capabilities': ('{"hw_machine_type": ["%s"]}' %
+                                     constants.IMAGE_PROP_VM_GEN_1),
                     }
         self.assertEqual(expected, response)
 

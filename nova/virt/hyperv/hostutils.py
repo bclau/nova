@@ -118,3 +118,14 @@ class HostUtils(object):
 
     def get_default_vm_generation(self):
         return self._DEFAULT_VM_GENERATION
+
+    def get_host_capabilities(self):
+        if self.check_min_windows_version(6, 3):
+            vm_gens = [constants.IMAGE_PROP_VM_GEN_1,
+                       constants.IMAGE_PROP_VM_GEN_2]
+        else:
+            vm_gens = [constants.IMAGE_PROP_VM_GEN_1]
+
+        return {
+            'hw_machine_type': vm_gens,
+        }
