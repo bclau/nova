@@ -960,6 +960,26 @@ class ComputeDriver(object):
         """
         raise NotImplementedError()
 
+    def live_migration_cleanup_flags(self, migrate_data):
+        """Determine whether disks or instance path need to be cleaned up after
+        live migration (at source on success, at destination on rollback)
+
+        Block migration needs empty image at destination host before migration
+        starts, so if any failure occurs, any empty images has to be deleted.
+
+        Also Volume backed live migration w/o shared storage needs to delete
+        newly created instance-xxx dir on the destination as a part of its
+        rollback process
+
+        :param migrate_data: implementation specific data
+        :returns: (bool, bool) -- do_cleanup, destroy_disks
+        """
+        # NOTE(pkoniszewski): block migration specific params are set inside
+        # migrate_data objects for drivers that expose block live migration
+        # information (i.e. Libvirt, Xenapi and HyperV). For other drivers
+        # cleanup is not needed.
+        return (False, False)
+
     def get_instance_disk_info(self, instance,
                                block_device_info=None):
         """Retrieve information about actual disk sizes of an instance.

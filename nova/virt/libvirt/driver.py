@@ -6931,6 +6931,18 @@ class LibvirtDriver(driver.ComputeDriver):
         xml = guest.get_xml_desc()
         self._host.write_instance_config(xml)
 
+    def live_migration_cleanup_flags(self, migrate_data):
+        is_shared_block_storage = migrate_data.is_shared_block_storage
+        is_shared_instance_path = migrate_data.is_shared_instance_path
+
+        # No instance booting at source host, but instance dir
+        # must be deleted for preparing next block migration
+        # must be deleted for preparing next live migration w/o shared storage
+        do_cleanup = not is_shared_instance_path
+        destroy_disks = not is_shared_block_storage
+
+        return (do_cleanup, destroy_disks)
+
     def _get_instance_disk_info(self, instance_name, xml,
                                 block_device_info=None):
         """Get the non-volume disk information from the domain xml

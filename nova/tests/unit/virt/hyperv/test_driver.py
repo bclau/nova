@@ -370,6 +370,14 @@ class HyperVDriverTestCase(test_base.HyperVBaseTestCase):
             mock.sentinel.context, mock.sentinel.instance,
             mock.sentinel.dest_check_data)
 
+    def test_live_migration_cleanup_flags(self):
+        cleanup_flags = self.driver.live_migration_cleanup_flags(
+            mock.sentinel.migrate_data)
+
+        method = self.driver._livemigrationops.live_migration_cleanup_flags
+        self.assertEqual(method.return_value, cleanup_flags)
+        method.assert_called_once_with(mock.sentinel.migrate_data)
+
     def test_plug_vifs(self):
         self.driver.plug_vifs(
             mock.sentinel.instance, mock.sentinel.network_info)

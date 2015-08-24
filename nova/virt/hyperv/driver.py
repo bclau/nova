@@ -277,6 +277,10 @@ class HyperVDriver(driver.ComputeDriver):
         return self._livemigrationops.check_can_live_migrate_source(
             context, instance, dest_check_data)
 
+    def live_migration_cleanup_flags(self, migrate_data):
+        return self._livemigrationops.live_migration_cleanup_flags(
+            migrate_data)
+
     def get_instance_disk_info(self, instance, block_device_info=None):
         pass
 

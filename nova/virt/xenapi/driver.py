@@ -490,6 +490,13 @@ class XenAPIDriver(driver.ComputeDriver):
         return self._vmops.check_can_live_migrate_source(context, instance,
                                                          dest_check_data)
 
+    def live_migration_cleanup_flags(self, migrate_data):
+        block_migration = migrate_data.block_migration
+        do_cleanup = block_migration
+        destroy_disks = block_migration
+
+        return (do_cleanup, destroy_disks)
+
     def get_instance_disk_info(self, instance,
                                block_device_info=None):
         """Used by libvirt for live migration. We rely on xenapi

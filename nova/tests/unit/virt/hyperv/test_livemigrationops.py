@@ -227,3 +227,11 @@ class LiveMigrationOpsTestCase(test_base.HyperVBaseTestCase):
             block_migration=mock.sentinel.BLOCK_INFO)
         mock_plug_vifs.assert_called_once_with(mock.sentinel.instance,
                                                mock.sentinel.NET_INFO)
+
+    def test_live_migration_cleanup_flags(self):
+        mock_migrate_data = mock.Mock(is_shared_instance_path=False)
+
+        do_cleanup, destroy_disks = (
+            self._livemigrops.live_migration_cleanup_flags(mock_migrate_data))
+        self.assertTrue(do_cleanup)
+        self.assertTrue(destroy_disks)

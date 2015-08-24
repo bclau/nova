@@ -6235,7 +6235,7 @@ class ComputeTestCase(BaseTestCase):
 
         mock_bdms.return_value = []
 
-        @mock.patch.object(self.compute, '_live_migration_cleanup_flags')
+        @mock.patch.object(self.compute.driver, 'live_migration_cleanup_flags')
         @mock.patch.object(self.compute, 'network_api')
         def _test(mock_nw_api, mock_lmcf):
             mock_lmcf.return_value = False, False
@@ -6258,7 +6258,7 @@ class ComputeTestCase(BaseTestCase):
 
         mock_bdms.return_value = []
 
-        @mock.patch.object(self.compute, '_live_migration_cleanup_flags')
+        @mock.patch.object(self.compute.driver, 'live_migration_cleanup_flags')
         @mock.patch.object(self.compute, 'network_api')
         def _test(mock_nw_api, mock_lmcf):
             mock_lmcf.return_value = False, False

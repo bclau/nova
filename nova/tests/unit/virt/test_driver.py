@@ -13,6 +13,7 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
+import mock
 from oslo_config import fixture as fixture_config
 
 from nova import test
@@ -38,3 +39,16 @@ class DriverMethodTestCase(test.NoDBTestCase):
             self.CONF.set_override('compute_driver', driver_name,
                                    enforce_type=True)
             self.assertFalse(driver.is_xenapi())
+
+
+class DriverTestCase(test.NoDBTestCase):
+
+    def setUp(self):
+        super(DriverTestCase, self).setUp()
+        self.driver = driver.ComputeDriver(virtapi=mock.Mock())
+
+    def test_live_migration_cleanup_flags(self):
+        do_cleanup, destroy_disks = self.driver.live_migration_cleanup_flags(
+            mock.sentinel.migrate_data)
+        self.assertFalse(do_cleanup)
+        self.assertFalse(destroy_disks)

@@ -5481,44 +5481,6 @@ class ComputeManager(manager.Manager):
         self._notify_about_instance_usage(
             context, instance, 'live.migration.abort.end')
 
-    def _live_migration_cleanup_flags(self, migrate_data):
-        """Determine whether disks or instance path need to be cleaned up after
-        live migration (at source on success, at destination on rollback)
-
-        Block migration needs empty image at destination host before migration
-        starts, so if any failure occurs, any empty images has to be deleted.
-
-        Also Volume backed live migration w/o shared storage needs to delete
-        newly created instance-xxx dir on the destination as a part of its
-        rollback process
-
-        :param migrate_data: implementation specific data
-        :returns: (bool, bool) -- do_cleanup, destroy_disks
-        """
-        # NOTE(pkoniszewski): block migration specific params are set inside
-        # migrate_data objects for drivers that expose block live migration
-        # information (i.e. Libvirt, Xenapi and HyperV). For other drivers
-        # cleanup is not needed.
-        is_shared_block_storage = True
-        is_shared_instance_path = True
-        if isinstance(migrate_data, migrate_data_obj.LibvirtLiveMigrateData):
-            is_shared_block_storage = migrate_data.is_shared_block_storage
-            is_shared_instance_path = migrate_data.is_shared_instance_path
-        elif isinstance(migrate_data, migrate_data_obj.XenapiLiveMigrateData):
-            is_shared_block_storage = not migrate_data.block_migration
-            is_shared_instance_path = not migrate_data.block_migration
-        elif isinstance(migrate_data, migrate_data_obj.HyperVLiveMigrateData):
-            is_shared_instance_path = migrate_data.is_shared_instance_path
-            is_shared_block_storage = migrate_data.is_shared_instance_path
-
-        # No instance booting at source host, but instance dir
-        # must be deleted for preparing next block migration
-        # must be deleted for preparing next live migration w/o shared storage
-        do_cleanup = not is_shared_instance_path
-        destroy_disks = not is_shared_block_storage
-
-        return (do_cleanup, destroy_disks)
-
     @wrap_exception()
     @wrap_instance_fault
     def _post_live_migration(self, ctxt, instance,
@@ -5604,7 +5566,7 @@ class ComputeManager(manager.Manager):
             LOG.exception(_LE("Post live migration at destination %s failed"),
                     dest, instance=instance, error=error)
 
-        do_cleanup, destroy_disks = self._live_migration_cleanup_flags(
+        do_cleanup, destroy_disks = self.driver.live_migration_cleanup_flags(
                 migrate_data)
 
         if do_cleanup:
@@ -5772,7 +5734,7 @@ class ComputeManager(manager.Manager):
         self._notify_about_instance_usage(context, instance,
                                           "live_migration._rollback.start")
 
-        do_cleanup, destroy_disks = self._live_migration_cleanup_flags(
+        do_cleanup, destroy_disks = self.driver.live_migration_cleanup_flags(
                 migrate_data)
 
         if do_cleanup:

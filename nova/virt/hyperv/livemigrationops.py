@@ -141,3 +141,10 @@ class LiveMigrationOps(object):
                                       dest_check_data):
         LOG.debug("check_can_live_migrate_source called", instance_ref)
         return dest_check_data
+
+    def live_migration_cleanup_flags(self, migrate_data):
+        # NOTE(claudiub): Planned VMs needs to be cleaned up.
+        do_cleanup = True
+        is_shared_instance_path = migrate_data.is_shared_instance_path
+        destroy_disks = not is_shared_instance_path
+        return (do_cleanup, destroy_disks)

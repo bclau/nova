@@ -14319,6 +14319,18 @@ class LibvirtConnTestCase(test.NoDBTestCase):
         mock_write_instance_config.assert_called_once_with(
             "<domain></domain>")
 
+    def test_live_migration_cleanup_flags(self):
+        migrate_data = objects.LibvirtLiveMigrateData(
+            is_shared_instance_path=True,
+            is_shared_block_storage=False,
+        )
+        drvr = libvirt_driver.LibvirtDriver(fake.FakeVirtAPI(), False)
+
+        cleanup, destroy_disks = drvr.live_migration_cleanup_flags(
+            migrate_data)
+        self.assertFalse(cleanup)
+        self.assertTrue(destroy_disks)
+
     def test_create_propagates_exceptions(self):
         self.flags(virt_type='lxc', group='libvirt')
 

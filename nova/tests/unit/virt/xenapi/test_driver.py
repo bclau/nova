@@ -19,6 +19,7 @@ import mock
 from oslo_utils import units
 
 from nova.objects import fields as obj_fields
+from nova import objects
 from nova.tests.unit.virt.xenapi import stubs
 from nova.virt import driver
 from nova.virt import fake
@@ -215,6 +216,16 @@ class XenAPIDriverTestCase(stubs.XenAPITestBaseNoDB):
         driver.detach_interface('fake_context', 'fake_instance', 'fake_vif')
         mock_detach_interface.assert_called_once_with('fake_instance',
                                                       'fake_vif')
+
+    def test_live_migration_cleanup_flags(self):
+        migrate_data = objects.XenapiLiveMigrateData(
+            block_migration=True
+        )
+        driver = self._get_driver()
+        cleanup, destroy_disks = driver.live_migration_cleanup_flags(
+            migrate_data)
+        self.assertTrue(cleanup)
+        self.assertTrue(destroy_disks)
 
     @mock.patch.object(xenapi_driver.vmops.VMOps,
                        'post_live_migration_at_source')
