@@ -111,6 +111,11 @@ class ComputeTaskAPI(object):
                 block_migration, disk_over_commit, None,
                 request_spec=request_spec)
 
+    def live_resize_instance(self, context, instance, scheduler_hint, flavor):
+        self.conductor_compute_rpcapi.live_resize_instance(
+            context, instance=instance, scheduler_hint=scheduler_hint,
+            flavor=flavor)
+
     def build_instances(self, context, instances, image, filter_properties,
             admin_password, injected_files, requested_networks,
             security_groups, block_device_mapping, legacy_bdm=True,

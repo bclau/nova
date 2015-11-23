@@ -280,6 +280,7 @@ class ComputeTaskAPI(object):
            instance.
     1.20 - migrate_server() now gets a 'host_list' parameter that represents
            potential alternate hosts for retries within a cell.
+    1.21 - Added live_resize_instance()
     """
 
     def __init__(self):
@@ -335,6 +336,14 @@ class ComputeTaskAPI(object):
             version = '1.4'
         cctxt = self.client.prepare(version=version)
         return cctxt.call(context, 'migrate_server', **kw)
+
+    def live_resize_instance(self, context, instance, scheduler_hint, flavor):
+        kw = {'instance': instance, 'flavor': flavor,
+              'scheduler_hint': scheduler_hint}
+        version = '1.21'
+
+        cctxt = self.client.prepare(version=version)
+        return cctxt.call(context, 'live_resize_instance', **kw)
 
     def build_instances(self, context, instances, image, filter_properties,
             admin_password, injected_files, requested_networks,

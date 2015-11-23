@@ -418,6 +418,18 @@ class _BaseTaskTestCase(object):
     def test_cold_migrate_forced_shutdown(self):
         self._test_cold_migrate(clean_shutdown=False)
 
+    def test_live_resize(self):
+        inst = fake_instance.fake_db_instance()
+        inst_obj = objects.Instance._from_db_object(
+            self.context, objects.Instance(), inst, [])
+        flavor = flavors.get_default_flavor()
+
+        scheduler_hint = {'filter_properties': {}}
+
+        self.conductor.live_resize_instance(self.context, inst_obj, flavor,
+                                            reservations=[],
+                                            scheduler_hint=scheduler_hint)
+
     @mock.patch('nova.objects.BuildRequest.get_by_instance_uuid')
     @mock.patch('nova.availability_zones.get_host_availability_zone')
     @mock.patch('nova.objects.Instance.save')

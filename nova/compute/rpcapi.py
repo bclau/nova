@@ -293,6 +293,7 @@ class ComputeAPI(object):
         * 4.4  - Make refresh_instance_security_rules send an instance object
         * 4.5  - Add migration, scheduler_node and limits arguments to
                  rebuild_instance()
+        * 4.6  - Added live_resize_instance()
 
         ... Liberty supports messaging version 4.5. So, any changes to
         existing methods in 4.x after that point should be done so that they

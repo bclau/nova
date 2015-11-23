@@ -35,6 +35,7 @@ from nova.compute import utils as compute_utils
 from nova.compute.utils import wrap_instance_event
 from nova.compute import vm_states
 from nova.conductor.tasks import live_migrate
+from nova.conductor.tasks import live_resize
 from nova.conductor.tasks import migrate
 from nova import context as nova_context
 from nova.db import base
@@ -220,7 +221,7 @@ class ComputeTaskManager(base.Base):
     may involve coordinating activities on multiple compute nodes.
     """
 
-    target = messaging.Target(namespace='compute_task', version='1.20')
+    target = messaging.Target(namespace='compute_task', version='1.21')
 
     def __init__(self):
         super(ComputeTaskManager, self).__init__()
@@ -462,6 +463,10 @@ class ComputeTaskManager(base.Base):
                                               self.scheduler_client,
                                               request_spec)
 
+    def _build_live_resize_task(self, context, instance, flavor, image):
+        return live_resize.LiveResizeTask(context, instance, flavor, image,
+                                          self.compute_rpcapi)
+
     def _build_cold_migrate_task(self, context, instance, flavor, request_spec,
             reservations, clean_shutdown, host_list):
         return migrate.MigrationTask(context, instance, flavor,
@@ -514,6 +519,45 @@ class ComputeTaskManager(base.Base):
     # NOTE(danms): This is never cell-targeted because it is only used for
     # cellsv1 (which does not target cells directly) and n-cpu reschedules
     # (which go to the cell conductor and thus are always cell-specific).
+
+    @messaging.expected_exceptions(exception.ComputeServiceUnavailable,
+                                   exception.InvalidLocalStorage,
+                                   exception.InvalidSharedStorage,
+                                   exception.HypervisorUnavailable,
+                                   exception.InstanceInvalidState,
+                                   exception.UnsupportedPolicyException)
+    def live_resize_instance(self, context, instance, scheduler_hint, flavor):
+        if instance and not isinstance(instance, nova_object.NovaObject):
+            # NOTE(danms): Until v2 of the RPC API, we need to tolerate
+            # old-world instance objects here
+            attrs = ['metadata', 'system_metadata', 'info_cache',
+                     'security_groups']
+            instance = objects.Instance._from_db_object(
+                context, objects.Instance(), instance,
+                expected_attrs=attrs)
+        # NOTE: Remove this when we drop support for v1 of the RPC API
+        if flavor and not isinstance(flavor, objects.Flavor):
+            # Code downstream may expect extra_specs to be populated since it
+            # is receiving an object, so lookup the flavor to ensure this.
+            flavor = objects.Flavor.get_by_id(context, flavor['id'])
+
+        image = utils.get_image_from_system_metadata(
+            instance.system_metadata)
+
+        request_spec = scheduler_utils.build_request_spec(
+            context, image, [instance], instance_type=flavor)
+
+        task = self._build_live_resize_task(context, instance, flavor, image)
+        try:
+            task.execute()
+        except Exception as ex:
+            with excutils.save_and_reraise_exception():
+                updates = {'vm_state': instance.vm_state,
+                           'task_state': None}
+                self._set_vm_state_and_notify(context, instance.uuid,
+                                              'live_resize',
+                                              updates, ex, request_spec)
+
     def build_instances(self, context, instances, image, filter_properties,
             admin_password, injected_files, requested_networks,
             security_groups, block_device_mapping=None, legacy_bdm=True,
