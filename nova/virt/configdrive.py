@@ -20,6 +20,7 @@ import shutil
 
 from oslo_utils import fileutils
 from oslo_utils import units
+import six
 
 import nova.conf
 from nova import exception
@@ -59,6 +60,10 @@ class ConfigDriveBuilder(object):
         dirname = os.path.dirname(filepath)
         fileutils.ensure_tree(dirname)
         with open(filepath, 'wb') as f:
+            # the given data can be either text or bytes. we can only write
+            # bytes into files.
+            if type(data) == six.text_type:
+                data = six.b(data)
             f.write(data)
 
     def add_instance_metadata(self, instance_md):
