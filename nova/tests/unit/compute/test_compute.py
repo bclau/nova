@@ -6340,6 +6340,42 @@ class ComputeTestCase(BaseTestCase,
         # cleanup
         instance.destroy()
 
+    def test_live_migration_cleanup_flags_libvirt(self):
+        migrate_data = objects.LibvirtLiveMigrateData(
+            is_shared_instance_path=True,
+            is_shared_block_storage=False)
+
+        cleanup, destroy_disks = self.compute._live_migration_cleanup_flags(
+            migrate_data)
+        self.assertFalse(cleanup)
+        self.assertTrue(destroy_disks)
+
+    def test_live_migration_cleanup_flags_xenapi(self):
+        migrate_data = objects.XenapiLiveMigrateData(
+            block_migration=True)
+
+        cleanup, destroy_disks = self.compute._live_migration_cleanup_flags(
+            migrate_data)
+        self.assertTrue(cleanup)
+        self.assertTrue(destroy_disks)
+
+    def test_live_migration_cleanup_flags_hyperv(self):
+        migrate_data = objects.HyperVLiveMigrateData(
+            is_shared_instance_path=False)
+
+        cleanup, destroy_disks = self.compute._live_migration_cleanup_flags(
+            migrate_data)
+        self.assertTrue(cleanup)
+        self.assertTrue(destroy_disks)
+
+    def test_live_migration_cleanup_flags_other(self):
+        migrate_data = mock.Mock()
+
+        cleanup, destroy_disks = self.compute._live_migration_cleanup_flags(
+            migrate_data)
+        self.assertFalse(cleanup)
+        self.assertFalse(destroy_disks)
+
     @mock.patch.object(fake.FakeDriver, 'unfilter_instance')
     @mock.patch.object(compute_rpcapi.ComputeAPI,
                        'post_live_migration_at_destination')
