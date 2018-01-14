@@ -16,6 +16,8 @@
 
 import mock
 from os_win import utilsfactory
+from oslo_utils import importutils
+from oslotest import mock_fixture
 from six.moves import builtins
 
 from nova import test
@@ -24,12 +26,18 @@ from nova import test
 class HyperVBaseTestCase(test.NoDBTestCase):
     def setUp(self):
         super(HyperVBaseTestCase, self).setUp()
+        #self.useFixture(mock_fixture.MockAutospecFixture())
 
         self._mock_wmi = mock.MagicMock()
         wmi_patcher = mock.patch.object(builtins, 'wmi', create=True,
                                         new=self._mock_wmi)
         platform_patcher = mock.patch('sys.platform', 'win32')
-        utilsfactory_patcher = mock.patch.object(utilsfactory, '_get_class')
+
+        # NOTE(claudiub): *ops classes in the Hyper-V driver uses *utils
+        # classes from os_win, returned by this utilsfactory. We're
+        # patching the module so it will always return an autospec'd mock.
+        utilsfactory_patcher = mock.patch.object(
+            utilsfactory, '_get_class', HyperVBaseTestCase._mock_get_class)
 
         platform_patcher.start()
         wmi_patcher.start()
@@ -38,3 +46,12 @@ class HyperVBaseTestCase(test.NoDBTestCase):
         self.addCleanup(wmi_patcher.stop)
         self.addCleanup(platform_patcher.stop)
         self.addCleanup(utilsfactory_patcher.stop)
+
+    @staticmethod
+    def _mock_get_class(class_type, *args, **kwargs):
+        existing_classes = utilsfactory.utils_map[class_type]
+        class_info = list(existing_classes.values())[0]
+        imported_class = importutils.import_class(class_info['path'])
+
+        #return mock.MagicMock(autospec=imported_class)
+        return mock.create_autospec(imported_class, instance=True)
