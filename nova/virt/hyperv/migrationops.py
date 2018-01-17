@@ -41,6 +41,7 @@ class MigrationOps(object):
     def __init__(self):
         self._vmutils = utilsfactory.get_vmutils()
         self._vhdutils = utilsfactory.get_vhdutils()
+        self._wmi_vhdutils = utilsfactory.get_wmi_vhdutils()
         self._pathutils = pathutils.PathUtils()
         self._volumeops = volumeops.VolumeOps()
         self._vmops = vmops.VMOps()
@@ -168,29 +169,8 @@ class MigrationOps(object):
         self._revert_migration_files(instance_name)
 
         image_meta = objects.ImageMeta.from_instance(instance)
-        vm_gen = self._vmops.get_image_vm_generation(instance.uuid, image_meta)
-
-        self._block_dev_man.validate_and_update_bdi(instance, image_meta,
-                                                    vm_gen, block_device_info)
-        root_device = block_device_info['root_disk']
-
-        if root_device['type'] == constants.DISK:
-            root_vhd_path = self._pathutils.lookup_root_vhd_path(instance_name)
-            root_device['path'] = root_vhd_path
-            if not root_vhd_path:
-                base_vhd_path = self._pathutils.get_instance_dir(instance_name)
-                raise exception.DiskNotFound(location=base_vhd_path)
-
-        ephemerals = block_device_info['ephemerals']
-        self._check_ephemeral_disks(instance, ephemerals)
-
-        self._vmops.create_instance(instance, network_info, root_device,
-                                    block_device_info, vm_gen, image_meta)
-
-        self._check_and_attach_config_drive(instance, vm_gen)
-        self._vmops.set_boot_order(instance_name, vm_gen, block_device_info)
-        if power_on:
-            self._vmops.power_on(instance, network_info=network_info)
+        self._recreate_vm(context, instance, network_info, image_meta,
+                          block_device_info, power_on)
 
     def _merge_base_vhd(self, diff_vhd_path, base_vhd_path):
         base_vhd_copy_path = os.path.join(os.path.dirname(diff_vhd_path),
@@ -236,7 +216,7 @@ class MigrationOps(object):
     def _resize_vhd(self, vhd_path, new_size):
         if vhd_path.split('.')[-1].lower() == "vhd":
             LOG.debug("Getting parent disk info for disk: %s", vhd_path)
-            base_disk_path = self._vhdutils.get_vhd_parent_path(vhd_path)
+            base_disk_path = self._wmi_vhdutils.get_vhd_parent_path(vhd_path)
             if base_disk_path:
                 # A differential VHD cannot be resized. This limitation
                 # does not apply to the VHDX format.
@@ -244,7 +224,7 @@ class MigrationOps(object):
         LOG.debug("Resizing disk \"%(vhd_path)s\" to new max "
                   "size %(new_size)s",
                   {'vhd_path': vhd_path, 'new_size': new_size})
-        self._vhdutils.resize_vhd(vhd_path, new_size)
+        self._wmi_vhdutils.resize_vhd(vhd_path, new_size)
 
     def _check_base_disk(self, context, instance, diff_vhd_path,
                          src_base_disk_path):
@@ -265,22 +245,40 @@ class MigrationOps(object):
                          network_info, image_meta, resize_instance=False,
                          block_device_info=None, power_on=True):
         LOG.debug("finish_migration called", instance=instance)
+        self._recreate_vm(context, instance, network_info, image_meta,
+                          block_device_info, power_on, resize_instance)
 
+    def _recreate_vm(self, context, instance, network_info, image_meta,
+                     block_device_info, power_on, resize_instance=False):
         instance_name = instance.name
         vm_gen = self._vmops.get_image_vm_generation(instance.uuid, image_meta)
 
+        self._check_and_update_disks(context, instance, vm_gen, image_meta,
+                                     block_device_info,
+                                     resize_instance=resize_instance)
+
+        self._vmops.create_instance(instance, network_info,
+                                    block_device_info, vm_gen, image_meta)
+
+        self._check_and_attach_config_drive(instance, vm_gen)
+        self._vmops.set_boot_order(instance_name, vm_gen, block_device_info)
+        if power_on:
+            self._vmops.power_on(instance, network_info=network_info)
+
+    def _check_and_update_disks(self, context, instance, vm_gen, image_meta,
+                                block_device_info, resize_instance=False):
         self._block_dev_man.validate_and_update_bdi(instance, image_meta,
                                                     vm_gen, block_device_info)
         root_device = block_device_info['root_disk']
 
         if root_device['type'] == constants.DISK:
-            root_vhd_path = self._pathutils.lookup_root_vhd_path(instance_name)
+            root_vhd_path = self._pathutils.lookup_root_vhd_path(instance.name)
             root_device['path'] = root_vhd_path
             if not root_vhd_path:
-                base_vhd_path = self._pathutils.get_instance_dir(instance_name)
+                base_vhd_path = self._pathutils.get_instance_dir(instance.name)
                 raise exception.DiskNotFound(location=base_vhd_path)
 
-            root_vhd_info = self._vhdutils.get_vhd_info(root_vhd_path)
+            root_vhd_info = self._wmi_vhdutils.get_vhd_info(root_vhd_path)
             src_base_disk_path = root_vhd_info.get("ParentPath")
             if src_base_disk_path:
                 self._check_base_disk(context, instance, root_vhd_path,
@@ -292,14 +290,6 @@ class MigrationOps(object):
 
         ephemerals = block_device_info['ephemerals']
         self._check_ephemeral_disks(instance, ephemerals, resize_instance)
-
-        self._vmops.create_instance(instance, network_info, root_device,
-                                    block_device_info, vm_gen, image_meta)
-
-        self._check_and_attach_config_drive(instance, vm_gen)
-        self._vmops.set_boot_order(instance_name, vm_gen, block_device_info)
-        if power_on:
-            self._vmops.power_on(instance, network_info=network_info)
 
     def _check_ephemeral_disks(self, instance, ephemerals,
                                resize_instance=False):
@@ -337,10 +327,48 @@ class MigrationOps(object):
             elif eph['size'] > 0:
                 # ephemerals exist. resize them.
                 eph['path'] = existing_eph_path
-                eph_vhd_info = self._vhdutils.get_vhd_info(eph['path'])
+                eph_vhd_info = self._wmi_vhdutils.get_vhd_info(eph['path'])
                 self._check_resize_vhd(
                     eph['path'], eph_vhd_info, eph['size'] * units.Gi)
             else:
                 # ephemeral new size is 0, remove it.
                 self._pathutils.remove(existing_eph_path)
                 eph['path'] = None
+
+    def check_instance_live_resize(self, instance, flavor, image_meta):
+        vm_gen = self._vmops.get_image_vm_generation(instance.uuid, image_meta)
+        self._block_dev_man.validate_and_update_bdi(instance, image_meta,
+                                                    vm_gen, block_device_info)
+        root_device = block_device_info['root_disk']
+
+        if (root_device['type'] == constants.DISK and
+                vm_gen == constants.VM_GEN_1):
+            # cannot live-resize generation 1 VM disks.
+            raise exception.NovaException(
+                _('Cannot live-resize Generation 1 VM disks.'))
+
+        # TODO(claudiub): check if the instance's dynamic memory allocation has
+        # been enabled. If it's not, memory cannot be resied. Dynamic memory
+        # allocation cannot be turned on / off while the instance is running.
+
+    def check_host_live_resize(self, instance, flavor, image_meta):
+        vm_gen = self._vmops.get_image_vm_generation(instance.uuid, image_meta)
+        if vm_gen == constants.VM_GEN_1:
+            # cannot live-resize generation 1 VMs.
+            raise exception.NovaException(
+                _('Cannot live-resize Generation 1 VMs.'))
+
+    def live_resize(self, context, instance, new_flavor, block_device_info,
+                    image_meta):
+        import pdb; pdb.set_trace()
+        # check disks.
+        vm_gen = self._vmops.get_image_vm_generation(instance.uuid, image_meta)
+
+        self._check_and_update_disks(context, instance, vm_gen, image_meta,
+                                     block_device_info,
+                                     resize_instance=True)
+
+        # update VM resources.
+        # TODO(claudiub): Raise an exception if PCI devices are to be updated.
+        self._vmops.update_vm_resources(instance, vm_gen, image_meta,
+                                        is_resize=True)

@@ -27,6 +27,8 @@ from oslo_log import log as logging
 import six
 
 from nova import exception
+from nova import image
+from nova import objects
 from nova.virt import driver
 from nova.virt.hyperv import eventhandler
 from nova.virt.hyperv import hostops
@@ -116,6 +118,7 @@ class HyperVDriver(driver.ComputeDriver):
         self._migrationops = migrationops.MigrationOps()
         self._rdpconsoleops = rdpconsoleops.RDPConsoleOps()
         self._serialconsoleops = serialconsoleops.SerialConsoleOps()
+        self._image_api = image.API()
         self._imagecache = imagecache.ImageCache()
 
     def _check_minimum_windows_version(self):
@@ -307,6 +310,17 @@ class HyperVDriver(driver.ComputeDriver):
                                    flavor, network_info,
                                    block_device_info=None,
                                    timeout=0, retry_interval=0):
+        if flavor.extra_specs.get('live_resize'):
+            image_meta = self._recreate_image_meta(context, instance)
+            self.check_instance_live_resize(context, instance, flavor,
+                                            block_device_info, image_meta)
+            if dest == instance.host:
+                # live resize on the same host. no preparation required.
+                return
+            else:
+                reason = "Live resize must be performed on the same host."
+                raise exception.LiveResizeError(reason=_(reason))
+
         return self._migrationops.migrate_disk_and_power_off(context,
                                                              instance, dest,
                                                              flavor,
@@ -316,11 +330,20 @@ class HyperVDriver(driver.ComputeDriver):
                                                              retry_interval)
 
     def confirm_migration(self, context, migration, instance, network_info):
+        flavor = instance.flavor
+        if flavor.extra_specs.get('live_resize'):
+            return
+
         self._migrationops.confirm_migration(context, migration,
                                              instance, network_info)
 
     def finish_revert_migration(self, context, instance, network_info,
                                 block_device_info=None, power_on=True):
+        flavor = instance.flavor
+        if flavor.extra_specs.get('live_resize'):
+            reason = "Cannot revert a live resize."
+            raise exception.LiveResizeError(reason=_(reason))
+
         self._migrationops.finish_revert_migration(context, instance,
                                                    network_info,
                                                    block_device_info, power_on)
@@ -328,10 +351,37 @@ class HyperVDriver(driver.ComputeDriver):
     def finish_migration(self, context, migration, instance, disk_info,
                          network_info, image_meta, resize_instance,
                          block_device_info=None, power_on=True):
+        flavor = instance.flavor
+        if flavor.extra_specs.get('live_resize'):
+            self.check_host_live_resize(context, instance, flavor,
+                                        block_device_info, image_meta)
+            self.live_resize(context, instance, flavor, block_device_info,
+                             None)
+            return
+
         self._migrationops.finish_migration(context, migration, instance,
                                             disk_info, network_info,
                                             image_meta, resize_instance,
                                             block_device_info, power_on)
+
+    def check_instance_live_resize(self, instance, flavor, block_device_info,
+                                   image_meta):
+        return self._migrationops.check_instance_live_resize(
+            instance, flavor, image_meta)
+
+    def check_host_live_resize(self, instance, flavor, block_device_info,
+                               image_meta):
+        return self._migrationops.check_host_live_resize(
+            instance, flavor, image_meta)
+
+    def live_resize(self, context, instance, flavor, block_device_info,
+                    image_meta):
+        import pdb; pdb.set_trace()
+        image_meta = self._recreate_image_meta(context, instance, image_meta)
+        self.check_host_live_resize(context, instance, flavor,
+                                    block_device_info, image_meta)
+        return self._migrationops.live_resize(context, instance, flavor,
+                                              block_device_info, image_meta)
 
     def get_host_ip_addr(self):
         return self._hostops.get_host_ip_addr()
@@ -364,3 +414,22 @@ class HyperVDriver(driver.ComputeDriver):
 
     def unrescue(self, instance, network_info):
         self._vmops.unrescue_instance(instance)
+
+    def _recreate_image_meta(self, context, instance, image_meta=None):
+        # TODO(claudiub): Cleanup this method. instance.system_metadata might
+        # already contain all the image metadata properties we need anyways.
+        if image_meta and image_meta.obj_attr_is_set("id"):
+            image_ref = image_meta.id
+        else:
+            image_ref = instance.system_metadata['image_base_image_ref']
+
+        if image_ref:
+            image_meta = self._image_api.get(context, image_ref)
+        else:
+            # boot from volume does not have an image_ref.
+            image_meta = image_meta.obj_to_primitive()['nova_object.data']
+            image_meta['properties'] = {k.replace('image_', '', 1): v for k, v
+                                        in instance.system_metadata.items()}
+        image_meta["id"] = image_ref
+        image_meta = objects.ImageMeta.from_dict(image_meta)
+        return image_meta

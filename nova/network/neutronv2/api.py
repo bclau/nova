@@ -212,7 +212,8 @@ def _is_not_duplicate(item, items, items_list_name, instance):
 def _ensure_no_port_binding_failure(port):
     binding_vif_type = port.get('binding:vif_type')
     if binding_vif_type == network_model.VIF_TYPE_BINDING_FAILED:
-        raise exception.PortBindingFailed(port_id=port['id'])
+        raise exception.PortBindingFailed(port_id=port['id'],
+                                          port=port)
 
 
 def _filter_hypervisor_macs(instance, requested_ports_dict, hypervisor_macs):

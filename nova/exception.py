@@ -860,6 +860,10 @@ class PortBindingFailed(Invalid):
     msg_fmt = _("Binding failed for port %(port_id)s, please check neutron "
                 "logs for more information.")
 
+    def __init__(self, port=None, *args, **kwargs):
+        super(PortBindingFailed, self).__init__(*args, **kwargs)
+        self.port = port
+
 
 class PortUpdateFailed(Invalid):
     msg_fmt = _("Port update failed for port %(port_id)s: %(reason)s")
@@ -1361,6 +1365,10 @@ class CannotResizeToSameFlavor(NovaException):
 
 class ResizeError(NovaException):
     msg_fmt = _("Resize error: %(reason)s")
+
+
+class LiveResizeError(NovaException):
+    msg_fmt = _("Live resize error: %(reason)s")
 
 
 class CannotResizeDisk(NovaException):

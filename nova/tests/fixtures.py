@@ -916,6 +916,7 @@ class PoisonFunctions(fixtures.Fixture):
         # explicit import because MonkeyPatch doesn't magic import
         # correctly if we are patching a method on a class in a
         # module.
+        return
         import nova.virt.libvirt.host  # noqa
 
         def evloop(*args, **kwargs):

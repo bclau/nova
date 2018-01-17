@@ -340,6 +340,8 @@ class ComputeAPI(object):
         * 4.20 - Add multiattach argument to reserve_block_device_name().
         * 4.21 - prep_resize() now gets a 'host_list' parameter representing
                  potential alternate hosts for retries within a cell.
+        * 4.22  - Added check_instance_live_resize(), check_host_live_resize(),
+                  and live_resize_instance()
     '''
 
     VERSION_ALIASES = {
@@ -886,6 +888,44 @@ class ComputeAPI(object):
         cctxt = self.router.client(ctxt).prepare(
                 server=_compute_host(None, instance), version=version)
         cctxt.cast(ctxt, 'reset_network', instance=instance)
+
+    def check_instance_live_resize(self, ctxt, instance, flavor,
+                                   block_device_info, image_meta):
+        """Checks if the given instance can be live resized."""
+        version = '4.20'
+        msg_args = {'instance': instance, 'flavor': flavor,
+                    'block_device_info': block_device_info,
+                    'image_meta': image_meta,
+        }
+        client = self.router.client(ctxt)
+        cctxt = client.prepare(server=_compute_host(None, instance),
+                               version=version)
+        return cctxt.cast(ctxt, 'check_instance_live_resize', **msg_args)
+
+    def check_host_live_resize(self, ctxt, instance, flavor, block_device_info,
+                               image_meta, destination):
+        """Checks if the host can live resize the given instance."""
+        version = '4.20'
+        msg_args = {'instance': instance, 'flavor': flavor,
+                    'block_device_info': block_device_info,
+                    'image_meta': image_meta,
+        }
+        client = self.router.client(ctxt)
+        cctxt = client.prepare(server=destination,
+                               version=version)
+        return cctxt.cast(ctxt, 'check_host_live_resize', **msg_args)
+
+    def live_resize_instance(self, ctxt, instance, flavor, block_device_info,
+                             image_meta, destination):
+        version = '4.20'
+        msg_args = {'instance': instance, 'flavor': flavor,
+                    'block_device_info': block_device_info,
+                    'image_meta': image_meta,
+        }
+        client = self.router.client(ctxt)
+        cctxt = client.prepare(server=destination,
+                               version=version)
+        return cctxt.cast(ctxt, 'live_resize', **msg_args)
 
     # TODO(melwitt): Remove the reservations parameter in version 5.0 of the
     # RPC API.

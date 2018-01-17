@@ -570,6 +570,52 @@ class ComputeDriver(object):
         """
         raise NotImplementedError()
 
+    def check_instance_live_resize(self, instance, flavor, block_device_info,
+                                   image_meta):
+        """Checks if the given instance can be live resized.
+
+        :param nova.objects.instance.Instance instance:
+            The instance that is to be live resized.
+        :param nova.objects.flavor.Flavor flavor:
+            The flavor to which the instance is to be live resized to.
+        :param dict block_device_info:
+            Information about the block devices.
+        :param nova.objects.ImageMeta image_meta:
+            The metadata of the image of the instance.
+        """
+        return False
+
+    def check_host_live_resize(self, instance, flavor, block_device_info,
+                               image_meta):
+        """Checks if the host can live resize the given instance.
+
+        :param nova.objects.instance.Instance instance:
+            The instance that is to be live resized.
+        :param nova.objects.flavor.Flavor flavor:
+            The flavor to which the instance is to be live resized to.
+        :param dict block_device_info:
+            Information about the block devices.
+        :param nova.objects.ImageMeta image_meta:
+            The metadata of the image of the instance.
+        """
+        return False
+
+    def live_resize(self, context, instance, flavor, block_device_info,
+                    image_meta):
+        """Live resizes a running instance.
+
+        :param context: security context
+        :param nova.objects.instance.Instance instance:
+            The instance that will be live resized.
+        :param nova.objects.flavor.Flavor flavor:
+            The flavor to which the instance will be live resized to.
+        :param dict block_device_info:
+            Information about the block devices.
+        :param nova.objects.ImageMeta image_meta:
+            The metadata of the image of the instance.
+        """
+        raise NotImplementedError()
+
     def migrate_disk_and_power_off(self, context, instance, dest,
                                    flavor, network_info,
                                    block_device_info=None,

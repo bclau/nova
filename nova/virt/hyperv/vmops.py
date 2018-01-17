@@ -284,7 +284,7 @@ class VMOps(object):
         try:
             with self.wait_vif_plug_events(instance, network_info):
                 # waiting will occur after the instance is created.
-                self.create_instance(instance, network_info, root_device,
+                self.create_instance(instance, network_info,
                                      block_device_info, vm_gen, image_meta)
 
             self._save_device_metadata(context, instance, block_device_info)
@@ -338,8 +338,9 @@ class VMOps(object):
         else:
             return []
 
-    def create_instance(self, instance, network_info, root_device,
+    def create_instance(self, instance, network_info,
                         block_device_info, vm_gen, image_meta):
+        root_device = block_device_info['root_disk']
         instance_name = instance.name
         instance_path = os.path.join(CONF.instances_path, instance_name)
         secure_boot_enabled = self._requires_secure_boot(instance, image_meta,
@@ -347,43 +348,13 @@ class VMOps(object):
 
         memory_per_numa_node, cpus_per_numa_node = (
             self._get_instance_vnuma_config(instance, image_meta))
-
-        if memory_per_numa_node:
-            LOG.debug("Instance requires vNUMA topology. Host's NUMA spanning "
-                      "has to be disabled in order for the instance to "
-                      "benefit from it.", instance=instance)
-            if CONF.hyperv.dynamic_memory_ratio > 1.0:
-                LOG.warning(
-                    "Instance vNUMA topology requested, but dynamic memory "
-                    "ratio is higher than 1.0 in nova.conf. Ignoring dynamic "
-                    "memory ratio option.", instance=instance)
-            dynamic_memory_ratio = 1.0
-            vnuma_enabled = True
-        else:
-            dynamic_memory_ratio = CONF.hyperv.dynamic_memory_ratio
-            vnuma_enabled = False
-
-        if instance.pci_requests.requests:
-            # NOTE(claudiub): if the instance requires PCI devices, its
-            # host shutdown action MUST be shutdown.
-            host_shutdown_action = os_win_const.HOST_SHUTDOWN_ACTION_SHUTDOWN
-        else:
-            host_shutdown_action = None
+        vnuma_enabled = bool(memory_per_numa_node)
 
         self._vmutils.create_vm(instance_name,
                                 vnuma_enabled,
                                 vm_gen,
                                 instance_path,
                                 [instance.uuid])
-
-        self._vmutils.update_vm(instance_name,
-                                instance.flavor.memory_mb,
-                                memory_per_numa_node,
-                                instance.flavor.vcpus,
-                                cpus_per_numa_node,
-                                CONF.hyperv.limit_cpu_features,
-                                dynamic_memory_ratio,
-                                host_shutdown_action=host_shutdown_action)
 
         self._configure_remotefx(instance, vm_gen)
 
@@ -412,19 +383,51 @@ class VMOps(object):
         if CONF.hyperv.enable_instance_metrics_collection:
             self._metricsutils.enable_vm_metrics_collection(instance_name)
 
-        self._set_instance_disk_qos_specs(instance)
-
         if secure_boot_enabled:
             certificate_required = self._requires_certificate(image_meta)
             self._vmutils.enable_secure_boot(
                 instance.name, msft_ca_required=certificate_required)
 
-        self._attach_pci_devices(instance)
+        self.update_vm_resources(instance, vm_gen, image_meta)
 
-    def _attach_pci_devices(self, instance):
-        for pci_request in instance.pci_requests.requests:
-            spec = pci_request.spec[0]
-            for counter in range(pci_request.count):
+    def update_vm_resources(self, instance, vm_gen, image_meta,
+                            instance_path=None, is_resize=False):
+        """Updates the VM's reconfigurable resources."""
+        memory_per_numa_node, cpus_per_numa_node = (
+            self._get_instance_vnuma_config(instance, image_meta))
+        vnuma_enabled = bool(memory_per_numa_node)
+
+        dynamic_memory_ratio = self._get_instance_dynamic_memory_ratio(
+            instance, vnuma_enabled)
+
+        host_shutdown_action = None
+        if instance.pci_requests.requests:
+            host_shutdown_action = os_win_const.HOST_SHUTDOWN_ACTION_SHUTDOWN
+
+        self._vmutils.update_vm(instance.name,
+                                instance.flavor.memory_mb,
+                                memory_per_numa_node,
+                                instance.flavor.vcpus,
+                                cpus_per_numa_node,
+                                CONF.hyperv.limit_cpu_features,
+                                dynamic_memory_ratio,
+                                configuration_root_dir=instance_path,
+                                host_shutdown_action=host_shutdown_action,
+                                vnuma_enabled=vnuma_enabled)
+
+        self._set_instance_disk_qos_specs(instance, is_resize)
+        self._attach_pci_devices(instance, is_resize)
+
+    def _attach_pci_devices(self, instance, is_resize):
+        if is_resize:
+            # NOTE(claudiub): there is no way to tell which devices to add when
+            # considering the old flavor. We need to remove all the PCI devices
+            # and then reattach them according to the new flavor.
+            self._vmutils.remove_all_pci_devices(instance.name)
+
+        for pci_req in instance.pci_requests.requests:
+            spec = pci_req.spec[0]
+            for counter in range(pci_req.count):
                 self._vmutils.add_pci_device(instance.name,
                                              spec['vendor_id'],
                                              spec['product_id'])
@@ -475,6 +478,21 @@ class VMOps(object):
                                                      instance_id=instance.uuid)
 
         return memory_per_numa_node, cpus_per_numa_node
+
+    def _get_instance_dynamic_memory_ratio(self, instance, vnuma_enabled):
+        dynamic_memory_ratio = CONF.hyperv.dynamic_memory_ratio
+        if vnuma_enabled:
+            LOG.debug("Instance requires vNUMA topology. Host's NUMA spanning "
+                      "has to be disabled in order for the instance to "
+                      "benefit from it.", instance=instance)
+            if CONF.hyperv.dynamic_memory_ratio > 1.0:
+                LOG.warning(
+                    "Instance vNUMA topology requested, but dynamic memory "
+                    "ratio is higher than 1.0 in nova.conf. Ignoring dynamic "
+                    "memory ratio option.", instance=instance)
+            dynamic_memory_ratio = 1.0
+
+        return dynamic_memory_ratio
 
     def _configure_remotefx(self, instance, vm_gen):
         extra_specs = instance.flavor.extra_specs
@@ -1068,7 +1086,7 @@ class VMOps(object):
 
         self.power_on(instance)
 
-    def _set_instance_disk_qos_specs(self, instance):
+    def _set_instance_disk_qos_specs(self, instance, is_resize):
         quota_specs = self._get_scoped_flavor_extra_specs(instance, 'quota')
 
         disk_total_bytes_sec = int(
@@ -1077,7 +1095,9 @@ class VMOps(object):
             quota_specs.get('disk_total_iops_sec') or
             self._volumeops.bytes_per_sec_to_iops(disk_total_bytes_sec))
 
-        if disk_total_iops_sec:
+        if disk_total_iops_sec or is_resize:
+            # NOTE(claudiub): the instance might have been "resized" to a
+            # flavor with no QoS specs. We need to set them to 0 in this case.
             local_disks = self._get_instance_local_disks(instance.name)
             for disk_path in local_disks:
                 self._vmutils.set_disk_qos_specs(disk_path,

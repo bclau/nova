@@ -485,7 +485,7 @@ class ComputeVirtAPI(virtapi.VirtAPI):
 class ComputeManager(manager.Manager):
     """Manages the running instances from creation to destruction."""
 
-    target = messaging.Target(version='4.21')
+    target = messaging.Target(version='4.22')
 
     # How long to wait in seconds before re-issuing a shutdown
     # signal to an instance during power off.  The overall
@@ -4197,6 +4197,50 @@ class ComputeManager(manager.Manager):
         else:
             # not re-scheduling
             six.reraise(*exc_info)
+
+    @wrap_exception()
+    def check_instance_live_resize(self, context, instance, flavor,
+                                   block_device_info, image_meta):
+        """Checks if the given instance can be live resized."""
+        return self.driver.check_instance_live_resize(
+            instance, flavor, block_device_info, image_meta)
+
+    @wrap_exception()
+    def check_host_live_resize(self, context, instance, flavor,
+                                block_device_info, image_meta):
+        """Checks if the host can live resize the given instance."""
+        return self.driver.check_host_live_resize(
+            instance, flavor, block_device_info, image_meta)
+
+    @wrap_exception()
+    @reverts_task_state
+    @wrap_instance_event
+    @wrap_instance_fault
+    def live_resize_instance(self, context, instance, image,
+                             reservations, migration, instance_type):
+        """Starts the live resize of a running instance."""
+        with self._error_out_instance_on_exception(context, instance), \
+             errors_out_migration_ctxt(migration):
+            # TODO(chaochin) Remove this until v5 RPC API
+            # Code downstream may expect extra_specs to be populated since it
+            # is receiving an object, so lookup the flavor to ensure this.
+            if (not instance_type or
+                not isinstance(instance_type, objects.Flavor)):
+                instance_type = objects.Flavor.get_by_id(
+                    context, migration['new_instance_type_id'])
+
+            migration.status = 'live-resizing'
+            with migration.obj_as_admin():
+                migration.save()
+
+            self._notify_about_instance_usage(context, instance,
+                                              "live_resize.start")
+
+            self.driver.live_resize(context, instance, instance_type, image)
+
+            self._notify_about_instance_usage(
+                context, instance, "live_resize.end")
+            self.instance_events.clear_events_for_instance(instance)
 
     @wrap_exception()
     @reverts_task_state
